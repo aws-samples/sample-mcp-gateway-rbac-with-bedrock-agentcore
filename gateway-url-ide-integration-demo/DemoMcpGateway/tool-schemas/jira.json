@@ -1,0 +1,25 @@
+[
+  {
+    "name": "list_jira_tickets",
+    "description": "List Jira tickets with optional filtering by status or project",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string",
+          "description": "Filter by project key (e.g., DEMO)"
+        },
+        "status": {
+          "type": "string",
+          "description": "Filter by ticket status",
+          "enum": ["Open", "In Progress", "Done", "Closed"]
+        },
+        "priority": {
+          "type": "string",
+          "description": "Filter by priority",
+          "enum": ["High", "Medium", "Low"]
+        }
+      }
+    }
+  }
+]

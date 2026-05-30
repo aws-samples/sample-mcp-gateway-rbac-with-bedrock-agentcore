@@ -1,0 +1,187 @@
+[
+  {
+    "id": "ORD-001",
+    "customer_id": "CUST-001",
+    "status": "shipped",
+    "total": 159.97,
+    "currency": "USD",
+    "created": "2026-05-15T10:30:00Z",
+    "updated": "2026-05-16T14:20:00Z",
+    "shipping_address": {
+      "street": "123 Business Ave",
+      "city": "San Francisco",
+      "state": "CA",
+      "zip": "94102",
+      "country": "USA"
+    },
+    "tracking_number": "1Z9999999999999999",
+    "items": [
+      {
+        "product_id": "PROD-001",
+        "product_name": "Wireless Mouse",
+        "quantity": 2,
+        "unit_price": 29.99,
+        "subtotal": 59.98
+      },
+      {
+        "product_id": "PROD-002",
+        "product_name": "USB-C Cable",
+        "quantity": 1,
+        "unit_price": 12.99,
+        "subtotal": 12.99
+      },
+      {
+        "product_id": "PROD-004",
+        "product_name": "Mechanical Keyboard",
+        "quantity": 1,
+        "unit_price": 89.99,
+        "subtotal": 89.99
+      }
+    ],
+    "shipping_cost": 7.99,
+    "tax": 12.80,
+    "grand_total": 180.76
+  },
+  {
+    "id": "ORD-002",
+    "customer_id": "CUST-002",
+    "status": "processing",
+    "total": 124.99,
+    "currency": "USD",
+    "created": "2026-05-18T14:20:00Z",
+    "updated": "2026-05-19T09:15:00Z",
+    "shipping_address": {
+      "street": "456 Enterprise Blvd",
+      "city": "New York",
+      "state": "NY",
+      "zip": "10001",
+      "country": "USA"
+    },
+    "tracking_number": null,
+    "items": [
+      {
+        "product_id": "PROD-003",
+        "product_name": "Laptop Stand",
+        "quantity": 1,
+        "unit_price": 45.00,
+        "subtotal": 45.00
+      },
+      {
+        "product_id": "PROD-006",
+        "product_name": "Monitor Arm",
+        "quantity": 1,
+        "unit_price": 79.99,
+        "subtotal": 79.99
+      }
+    ],
+    "shipping_cost": 9.99,
+    "tax": 11.20,
+    "grand_total": 146.18
+  },
+  {
+    "id": "ORD-003",
+    "customer_id": "CUST-004",
+    "status": "delivered",
+    "total": 44.49,
+    "currency": "USD",
+    "created": "2026-05-10T09:15:00Z",
+    "updated": "2026-05-14T16:30:00Z",
+    "delivered": "2026-05-14T16:30:00Z",
+    "shipping_address": {
+      "street": "321 Oak Street",
+      "city": "Seattle",
+      "state": "WA",
+      "zip": "98101",
+      "country": "USA"
+    },
+    "tracking_number": "1Z8888888888888888",
+    "items": [
+      {
+        "product_id": "PROD-005",
+        "product_name": "Desk Organizer",
+        "quantity": 1,
+        "unit_price": 24.50,
+        "subtotal": 24.50
+      },
+      {
+        "product_id": "PROD-008",
+        "product_name": "Headphone Stand",
+        "quantity": 1,
+        "unit_price": 19.99,
+        "subtotal": 19.99
+      }
+    ],
+    "shipping_cost": 5.99,
+    "tax": 4.40,
+    "grand_total": 54.88
+  },
+  {
+    "id": "ORD-004",
+    "customer_id": "CUST-003",
+    "status": "pending",
+    "total": 149.98,
+    "currency": "USD",
+    "created": "2026-05-20T16:45:00Z",
+    "updated": "2026-05-20T16:45:00Z",
+    "shipping_address": {
+      "street": "789 Innovation Dr",
+      "city": "Austin",
+      "state": "TX",
+      "zip": "78701",
+      "country": "USA"
+    },
+    "tracking_number": null,
+    "items": [
+      {
+        "product_id": "PROD-004",
+        "product_name": "Mechanical Keyboard",
+        "quantity": 1,
+        "unit_price": 89.99,
+        "subtotal": 89.99
+      },
+      {
+        "product_id": "PROD-007",
+        "product_name": "Webcam HD",
+        "quantity": 1,
+        "unit_price": 59.99,
+        "subtotal": 59.99
+      }
+    ],
+    "shipping_cost": 7.99,
+    "tax": 13.20,
+    "grand_total": 171.17
+  },
+  {
+    "id": "ORD-005",
+    "customer_id": "CUST-001",
+    "status": "cancelled",
+    "total": 45.00,
+    "currency": "USD",
+    "created": "2026-05-08T11:00:00Z",
+    "updated": "2026-05-09T10:30:00Z",
+    "cancelled": "2026-05-09T10:30:00Z",
+    "cancellation_reason": "Customer requested cancellation",
+    "shipping_address": {
+      "street": "123 Business Ave",
+      "city": "San Francisco",
+      "state": "CA",
+      "zip": "94102",
+      "country": "USA"
+    },
+    "tracking_number": null,
+    "items": [
+      {
+        "product_id": "PROD-003",
+        "product_name": "Laptop Stand",
+        "quantity": 1,
+        "unit_price": 45.00,
+        "subtotal": 45.00
+      }
+    ],
+    "shipping_cost": 0.00,
+    "tax": 0.00,
+    "grand_total": 0.00,
+    "refund_amount": 45.00,
+    "refund_status": "processed"
+  }
+]

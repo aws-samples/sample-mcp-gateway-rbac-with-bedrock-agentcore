@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "customer-agnostic-gateway": {
+      "command": "python3",
+      "args": ["${workspaceFolder}/npm-package/customer-gateway-proxy/bin/proxy.py"],
+      "description": "Customer-agnostic MCP gateway with RBAC",
+      "env": {
+        "GATEWAY_URL": "<YOUR_GATEWAY_URL>"
+      }
+    }
+  }
+}

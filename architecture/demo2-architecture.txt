@@ -1,0 +1,157 @@
+# Demo 2: Direct Bedrock API with Team-Based Access
+# Architecture Diagram (ASCII - convert to draw.io)
+
+┌────────────────────────────────────────────────────┐
+│  Browser (chatbox.html)                            │
+│                                                    │
+│  Team Selection:                                   │
+│  ┌─────────────┐  ┌─────────────┐                │
+│  │ Team Alpha  │  │ Team Beta   │                │
+│  │ API Key: xxx│  │ API Key: yyy│                │
+│  └─────────────┘  └─────────────┘                │
+└──────────────────────┬─────────────────────────────┘
+                       │
+                       │ HTTPS POST /mcp
+                       │ Headers: X-Squad: team-alpha
+                       │
+                       ▼
+            ┌──────────────────────────┐
+            │  API Gateway (HTTP API)  │
+            │                          │
+            │  - CORS: Allow *         │
+            │  - No auth (demo only)   │
+            │  - Routes: POST /mcp     │
+            └────────────┬─────────────┘
+                         │
+                         │ Lambda integration
+                         │ (AWS_PROXY)
+                         ▼
+          ┌──────────────────────────────────────┐
+          │  Lambda Proxy Function               │
+          │  (gateway-proxy/lambda_function.py)  │
+          │                                      │
+          │  1. Extract team from X-Squad header │
+          │  2. Map team → allowed models        │
+          │     • team-alpha: haiku, sonnet      │
+          │     • team-beta: haiku only          │
+          │  3. Validate model permission        │
+          │  4. Call bedrock.invoke_model()      │
+          │  5. Log with team attribution        │
+          └─────────────┬────────────────────────┘
+                        │
+                        │ boto3.client('bedrock-runtime')
+                        │ .invoke_model(modelId=..., body=...)
+                        │
+                        ▼
+          ┌─────────────────────────────────────┐
+          │  AWS Bedrock API                    │
+          │                                     │
+          │  Foundation Models:                 │
+          │  ┌─────────────────────────────┐   │
+          │  │ Claude 3.5 Haiku            │   │
+          │  │ (fast, cost-efficient)      │   │
+          │  └─────────────────────────────┘   │
+          │  ┌─────────────────────────────┐   │
+          │  │ Claude 3.5 Sonnet           │   │
+          │  │ (balanced)                  │   │
+          │  └─────────────────────────────┘   │
+          │  ┌─────────────────────────────┐   │
+          │  │ Claude Opus                 │   │
+          │  │ (most capable)              │   │
+          │  └─────────────────────────────┘   │
+          └─────────────────────────────────────┘
+
+# Lambda Environment Variables
+
+TEAM_ALPHA_MODELS = "haiku,sonnet"
+TEAM_BETA_MODELS = "haiku"
+AWS_REGION = "us-east-1"
+
+# IAM Permissions (Lambda Execution Role)
+
+{
+  "Effect": "Allow",
+  "Action": "bedrock:InvokeModel",
+  "Resource": [
+    "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-haiku*",
+    "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet*"
+  ]
+}
+
+# Request Flow
+
+1. User selects "Team Alpha" in browser
+2. User types: "Explain quantum computing in 50 words"
+3. Chatbox sends:
+   POST /mcp
+   Headers: X-Squad: team-alpha
+   Body: { "prompt": "...", "model_id": "sonnet" }
+
+4. API Gateway routes to Lambda
+
+5. Lambda extracts team:
+   team = event['headers']['x-squad']  # "team-alpha"
+
+6. Lambda checks permissions:
+   if "sonnet" in TEAM_ALPHA_MODELS:  # ✅ Yes
+       # Proceed
+   else:
+       return 403 Forbidden
+
+7. Lambda calls Bedrock directly:
+   bedrock = boto3.client('bedrock-runtime')
+   response = bedrock.invoke_model(
+       modelId='us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+       body=json.dumps({
+           "anthropic_version": "bedrock-2023-05-31",
+           "max_tokens": 1000,
+           "messages": [{"role": "user", "content": prompt}]
+       })
+   )
+
+8. Lambda logs to CloudWatch:
+   {
+     "team": "team-alpha",
+     "model": "sonnet",
+     "input_tokens": 20,
+     "output_tokens": 50,
+     "latency_ms": 850
+   }
+
+9. Response flows back:
+   Lambda → API Gateway → Browser
+
+# Key Differences from Demo 1
+
+┌──────────────────────┬─────────────────────┬─────────────────────┐
+│ Component            │ Demo 1              │ Demo 2              │
+├──────────────────────┼─────────────────────┼─────────────────────┤
+│ Gateway Layer        │ ✅ AgentCore Gateway│ ❌ None             │
+│ Authorization        │ Cedar policies      │ Lambda code         │
+│ Interface            │ VS Code stdio       │ Browser HTTPS       │
+│ Permissions Level    │ Tool-level          │ Model-level         │
+│ Authentication       │ IAM user            │ None (demo)         │
+│ Cost Tracking        │ Per IAM user        │ Per team            │
+└──────────────────────┴─────────────────────┴─────────────────────┘
+
+# Security Model
+
+- Authentication: None in demo (HTTP API)
+  → Production: Add REST API + API keys or Cognito
+- Authorization: Model permissions in Lambda environment variables
+- Audit: CloudWatch logs (team attribution in every log)
+
+# Cost Attribution
+
+CloudWatch log entries include team identifier:
+{
+  "timestamp": "2026-05-30T12:00:00Z",
+  "team": "team-alpha",
+  "model": "sonnet",
+  "cost_estimate": "$0.0015"
+}
+
+Query with CloudWatch Insights:
+fields @timestamp, team, model, input_tokens, output_tokens
+| filter team = "team-alpha"
+| stats sum(input_tokens) as total_input by team

@@ -1,0 +1,20 @@
+[
+  {
+    "name": "list_products",
+    "description": "List all products with optional filtering by category",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "category": {
+          "type": "string",
+          "description": "Filter by product category",
+          "enum": ["electronics", "accessories"]
+        },
+        "in_stock_only": {
+          "type": "boolean",
+          "description": "Only show products with stock > 0"
+        }
+      }
+    }
+  }
+]

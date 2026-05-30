@@ -1,0 +1,197 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'IAM Roles for MCP Gateway Demo - Team-based access control'
+
+Parameters:
+  GatewayId:
+    Type: String
+    Description: 'AgentCore Gateway ID (will be created separately)'
+    Default: 'YOUR-GATEWAY-ID'
+
+Resources:
+  # Team Alpha IAM Role
+  TeamAlphaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: team-alpha-access
+      Description: 'IAM role for Team Alpha - Access to ecommerce and products MCPs'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AgentCoreGatewayAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'bedrock-agentcore:InvokeGateway'
+                Resource:
+                  - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/${GatewayId}'
+        - PolicyName: BedrockInvokeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'bedrock:InvokeModel'
+                  - 'bedrock:InvokeModelWithResponseStream'
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*'
+      Tags:
+        - Key: Team
+          Value: Engineering
+        - Key: CostCenter
+          Value: CC-1001
+        - Key: Department
+          Value: Product
+        - Key: Project
+          Value: GuardrailDemo
+        - Key: Purpose
+          Value: mcp-gateway-demo
+
+  # Team Beta IAM Role
+  TeamBetaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: team-beta-access
+      Description: 'IAM role for Team Beta - Access to orders MCP only'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AgentCoreGatewayAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'bedrock-agentcore:InvokeGateway'
+                Resource:
+                  - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/${GatewayId}'
+        - PolicyName: BedrockInvokeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'bedrock:InvokeModel'
+                  - 'bedrock:InvokeModelWithResponseStream'
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*'
+      Tags:
+        - Key: Team
+          Value: Marketing
+        - Key: CostCenter
+          Value: CC-2002
+        - Key: Department
+          Value: Growth
+        - Key: Project
+          Value: GuardrailDemo
+        - Key: Purpose
+          Value: mcp-gateway-demo
+
+  # Lambda Proxy Execution Role
+  LambdaProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: mcp-gateway-proxy-role
+      Description: 'Execution role for MCP Gateway Proxy Lambda'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AssumeTeamRoles
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sts:AssumeRole'
+                Resource:
+                  - !GetAtt TeamAlphaRole.Arn
+                  - !GetAtt TeamBetaRole.Arn
+      Tags:
+        - Key: Purpose
+          Value: mcp-gateway-demo
+
+  # MCP Server Execution Role
+  MCPServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: mcp-server-execution-role
+      Description: 'Execution role for MCP Server Lambdas'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockGuardrailAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'bedrock:ApplyGuardrail'
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:guardrail/*'
+      Tags:
+        - Key: Purpose
+          Value: mcp-gateway-demo
+
+Outputs:
+  TeamAlphaRoleArn:
+    Description: 'IAM Role ARN for Team Alpha'
+    Value: !GetAtt TeamAlphaRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-TeamAlphaRoleArn'
+
+  TeamBetaRoleArn:
+    Description: 'IAM Role ARN for Team Beta'
+    Value: !GetAtt TeamBetaRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-TeamBetaRoleArn'
+
+  LambdaProxyRoleArn:
+    Description: 'IAM Role ARN for Lambda Proxy'
+    Value: !GetAtt LambdaProxyRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaProxyRoleArn'
+
+  MCPServerRoleArn:
+    Description: 'IAM Role ARN for MCP Servers'
+    Value: !GetAtt MCPServerRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-MCPServerRoleArn'

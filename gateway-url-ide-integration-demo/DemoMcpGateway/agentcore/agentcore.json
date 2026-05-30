@@ -1,0 +1,81 @@
+{
+  "$schema": "https://schema.agentcore.aws.dev/v1/agentcore.json",
+  "name": "DemoMcpGateway",
+  "version": 1,
+  "managedBy": "CDK",
+  "tags": {
+    "agentcore:created-by": "agentcore-cli",
+    "agentcore:project-name": "DemoMcpGateway"
+  },
+  "runtimes": [
+    {
+      "name": "DemoMcpGateway",
+      "build": "CodeZip",
+      "entrypoint": "main.py",
+      "codeLocation": "app/DemoMcpGateway/",
+      "runtimeVersion": "PYTHON_3_14",
+      "networkMode": "PUBLIC",
+      "protocol": "HTTP"
+    }
+  ],
+  "memories": [],
+  "credentials": [],
+  "evaluators": [],
+  "onlineEvalConfigs": [],
+  "agentCoreGateways": [
+    {
+      "name": "CustomerAgnosticGateway",
+      "description": "Gateway for CustomerAgnosticGateway",
+      "targets": [
+        {
+          "name": "customers-mcp",
+          "targetType": "lambdaFunctionArn",
+          "lambdaFunctionArn": {
+            "lambdaArn": "arn:aws:lambda:<REGION>:<ACCOUNT_ID>:function:demo-ecommerce-mcp",
+            "toolSchemaFile": "tool-schemas/customers.json"
+          }
+        },
+        {
+          "name": "products-mcp",
+          "targetType": "lambdaFunctionArn",
+          "lambdaFunctionArn": {
+            "lambdaArn": "arn:aws:lambda:<REGION>:<ACCOUNT_ID>:function:demo-products-mcp",
+            "toolSchemaFile": "tool-schemas/products.json"
+          }
+        },
+        {
+          "name": "orders-mcp",
+          "targetType": "lambdaFunctionArn",
+          "lambdaFunctionArn": {
+            "lambdaArn": "arn:aws:lambda:<REGION>:<ACCOUNT_ID>:function:demo-orders-mcp",
+            "toolSchemaFile": "tool-schemas/orders.json"
+          }
+        },
+        {
+          "name": "jira-mcp",
+          "targetType": "lambdaFunctionArn",
+          "lambdaFunctionArn": {
+            "lambdaArn": "arn:aws:lambda:<REGION>:<ACCOUNT_ID>:function:demo-jira-mcp",
+            "toolSchemaFile": "tool-schemas/jira.json"
+          }
+        }
+      ],
+      "authorizerType": "AWS_IAM",
+      "enableSemanticSearch": true,
+      "exceptionLevel": "NONE"
+    }
+  ],
+  "policyEngines": [
+    {
+      "name": "gateway_rbac_policy",
+      "type": "CEDAR",
+      "policyFiles": [
+        "policies/rbac-policy.cedar"
+      ]
+    }
+  ],
+  "configBundles": [],
+  "abTests": [],
+  "httpGateways": [],
+  "datasets": []
+}

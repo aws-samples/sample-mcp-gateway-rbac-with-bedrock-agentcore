@@ -1,0 +1,404 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Team-Based RBAC LLM Gateway - Direct Bedrock API with team-based access control
+
+  This template deploys:
+  - Core: API Gateway → Lambda Proxy → Bedrock API (REQUIRED)
+  - Optional: MCP Lambda functions for guardrail testing (OPTIONAL)
+
+  Minimal deployment: Only specify S3ArtifactBucket and ProxyCodeKey
+  Full deployment: Also specify MCP code keys and EnableGuardrail=true
+
+Parameters:
+  S3ArtifactBucket:
+    Type: String
+    Description: 'S3 bucket containing Lambda deployment packages'
+    Default: ''
+  ProxyCodeKey:
+    Type: String
+    Default: 'lambda/gateway-proxy.zip'
+    Description: 'S3 key for Lambda proxy code'
+  EcommerceMcpCodeKey:
+    Type: String
+    Default: ''
+    Description: 'S3 key for Ecommerce MCP Lambda code (optional - for guardrail testing)'
+  ProductsMcpCodeKey:
+    Type: String
+    Default: ''
+    Description: 'S3 key for Products MCP Lambda code (optional - for guardrail testing)'
+  OrdersMcpCodeKey:
+    Type: String
+    Default: ''
+    Description: 'S3 key for Orders MCP Lambda code (optional - for guardrail testing)'
+  EnableGuardrail:
+    Type: String
+    Default: 'true'
+    Description: 'Enable Bedrock Guardrail for product queries (true/false)'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  TeamAlphaRateLimit:
+    Type: Number
+    Default: 50
+    Description: 'API requests per second for Team Alpha'
+  TeamBetaRateLimit:
+    Type: Number
+    Default: 20
+    Description: 'API requests per second for Team Beta'
+
+Conditions:
+  DeployEcommerceMcp: !Not [!Equals [!Ref EcommerceMcpCodeKey, '']]
+  DeployProductsMcp: !Not [!Equals [!Ref ProductsMcpCodeKey, '']]
+  DeployOrdersMcp: !Not [!Equals [!Ref OrdersMcpCodeKey, '']]
+  DeployAnyMcp: !Or
+    - !Condition DeployEcommerceMcp
+    - !Condition DeployProductsMcp
+    - !Condition DeployOrdersMcp
+
+Resources:
+  # ============================================================
+  # AppConfig - Feature Flags (Optional - for MCP servers only)
+  # ============================================================
+  AppConfigApplication:
+    Type: AWS::AppConfig::Application
+    Condition: DeployAnyMcp
+    Properties:
+      Name: mcp-gateway-demo
+      Description: 'Feature flags for MCP Gateway Demo'
+
+  AppConfigEnvironment:
+    Type: AWS::AppConfig::Environment
+    Condition: DeployAnyMcp
+    Properties:
+      ApplicationId: !Ref AppConfigApplication
+      Name: production
+      Description: 'Production environment'
+
+  AppConfigConfigProfile:
+    Type: AWS::AppConfig::ConfigurationProfile
+    Condition: DeployAnyMcp
+    Properties:
+      ApplicationId: !Ref AppConfigApplication
+      Name: feature-flags
+      LocationUri: hosted
+      Type: AWS.AppConfig.FeatureFlags
+
+  AppConfigHostedVersion:
+    Type: AWS::AppConfig::HostedConfigurationVersion
+    Condition: DeployAnyMcp
+    Properties:
+      ApplicationId: !Ref AppConfigApplication
+      ConfigurationProfileId: !Ref AppConfigConfigProfile
+      ContentType: application/json
+      Content: !Sub |
+        {
+          "version": "1",
+          "flags": {
+            "guardrail_enabled": {
+              "name": "Guardrail Enabled",
+              "description": "Enable Bedrock Guardrail on product queries",
+              "attributes": {
+                "teams": { "type": "string" }
+              }
+            },
+            "team_alpha_access": {
+              "name": "Team Alpha Access",
+              "description": "Enable Team Alpha access to gateway"
+            },
+            "team_beta_access": {
+              "name": "Team Beta Access",
+              "description": "Enable Team Beta access to gateway"
+            }
+          },
+          "values": {
+            "guardrail_enabled": {
+              "enabled": ${EnableGuardrail},
+              "teams": "alpha-team,beta-team"
+            },
+            "team_alpha_access": {
+              "enabled": true
+            },
+            "team_beta_access": {
+              "enabled": true
+            }
+          }
+        }
+
+  AppConfigDeploymentStrategy:
+    Type: AWS::AppConfig::DeploymentStrategy
+    Condition: DeployAnyMcp
+    Properties:
+      Name: mcp-gateway-instant
+      DeploymentDurationInMinutes: 0
+      GrowthFactor: 100
+      ReplicateTo: NONE
+      FinalBakeTimeInMinutes: 0
+
+  AppConfigDeployment:
+    Type: AWS::AppConfig::Deployment
+    Condition: DeployAnyMcp
+    Properties:
+      ApplicationId: !Ref AppConfigApplication
+      EnvironmentId: !Ref AppConfigEnvironment
+      ConfigurationProfileId: !Ref AppConfigConfigProfile
+      ConfigurationVersion: !Ref AppConfigHostedVersion
+      DeploymentStrategyId: !Ref AppConfigDeploymentStrategy
+
+  # ============================================================
+  # IAM Roles
+  # ============================================================
+  TeamAlphaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-team-alpha'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'bedrock:InvokeModel'
+                Resource:
+                  - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-haiku*'
+                  - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet*'
+
+  TeamBetaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-team-beta'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'bedrock:InvokeModel'
+                Resource:
+                  - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-haiku*'
+
+  LambdaProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-proxy-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'bedrock:InvokeModel'
+                Resource:
+                  - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-haiku*'
+                  - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet*'
+                  - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-opus*'
+              - Effect: Allow
+                Action: 'bedrock:ApplyGuardrail'
+                Resource: '*'
+
+  MCPServerRole:
+    Type: AWS::IAM::Role
+    Condition: DeployAnyMcp
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-mcp-server-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockGuardrailAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'bedrock:ApplyGuardrail'
+                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:guardrail/*'
+        - PolicyName: AppConfigAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'appconfig:GetLatestConfiguration'
+                  - 'appconfig:StartConfigurationSession'
+                Resource: '*'
+
+  # ============================================================
+  # Lambda Functions
+  # ============================================================
+  GatewayProxyFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-proxy'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaProxyRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref S3ArtifactBucket
+        S3Key: !Ref ProxyCodeKey
+      Environment:
+        Variables:
+          TEAM_ALPHA_MODELS: "haiku,sonnet"
+          TEAM_BETA_MODELS: "haiku"
+          AWS_REGION: !Ref AWS::Region
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV3-python311-x86_64:7'
+
+  EcommerceMcpFunction:
+    Type: AWS::Lambda::Function
+    Condition: DeployEcommerceMcp
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-ecommerce-mcp'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt MCPServerRole.Arn
+      Timeout: 15
+      MemorySize: 128
+      Code:
+        S3Bucket: !Ref S3ArtifactBucket
+        S3Key: !Ref EcommerceMcpCodeKey
+
+  ProductsMcpFunction:
+    Type: AWS::Lambda::Function
+    Condition: DeployProductsMcp
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-products-mcp'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt MCPServerRole.Arn
+      Timeout: 15
+      MemorySize: 128
+      Code:
+        S3Bucket: !Ref S3ArtifactBucket
+        S3Key: !Ref ProductsMcpCodeKey
+      Environment:
+        Variables:
+          APPCONFIG_APP: !Ref AppConfigApplication
+          APPCONFIG_ENV: !Ref AppConfigEnvironment
+          APPCONFIG_PROFILE: !Ref AppConfigConfigProfile
+
+  OrdersMcpFunction:
+    Type: AWS::Lambda::Function
+    Condition: DeployOrdersMcp
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-orders-mcp'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt MCPServerRole.Arn
+      Timeout: 15
+      MemorySize: 128
+      Code:
+        S3Bucket: !Ref S3ArtifactBucket
+        S3Key: !Ref OrdersMcpCodeKey
+
+  # ============================================================
+  # API Gateway
+  # ============================================================
+  ApiGateway:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-api'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: ['*']
+        AllowMethods: ['POST', 'OPTIONS']
+        AllowHeaders: ['Content-Type', 'X-Squad']
+
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ApiGateway
+      StageName: '$default'
+      AutoDeploy: true
+
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGateway
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt GatewayProxyFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  ApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /mcp'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  LambdaApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref GatewayProxyFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*'
+
+Outputs:
+  ApiEndpoint:
+    Description: 'API Gateway endpoint URL for chatbox'
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/mcp'
+  ProxyFunctionArn:
+    Description: 'Gateway proxy Lambda function ARN'
+    Value: !GetAtt GatewayProxyFunction.Arn
+  EcommerceMcpArn:
+    Condition: DeployEcommerceMcp
+    Description: 'Ecommerce MCP Lambda ARN (optional)'
+    Value: !GetAtt EcommerceMcpFunction.Arn
+  ProductsMcpArn:
+    Condition: DeployProductsMcp
+    Description: 'Products MCP Lambda ARN (optional)'
+    Value: !GetAtt ProductsMcpFunction.Arn
+  OrdersMcpArn:
+    Condition: DeployOrdersMcp
+    Description: 'Orders MCP Lambda ARN (optional)'
+    Value: !GetAtt OrdersMcpFunction.Arn
+  AppConfigApplication:
+    Condition: DeployAnyMcp
+    Description: 'AppConfig application ID (optional)'
+    Value: !Ref AppConfigApplication
+  AppConfigEnvironment:
+    Condition: DeployAnyMcp
+    Description: 'AppConfig environment ID (optional)'
+    Value: !Ref AppConfigEnvironment

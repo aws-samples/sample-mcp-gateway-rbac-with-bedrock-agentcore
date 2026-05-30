@@ -1,0 +1,92 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Python virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# AWS
+.aws-sam/
+
+# Lambda zip artifacts
+*.zip
+function.zip
+
+# Node
+node_modules/
+
+# CDK build artifacts
+cdk.out/
+
+# AgentCore CLI cache and staging
+.cache/
+.cli/logs/
+
+# AgentCore deployment state (contains account-specific data)
+agentcore/.cli/deployed-state.json
+agentcore/aws-targets.json
+**/aws-targets.json
+**/.cli/deployed-state.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Secrets
+*.pem
+*.key
+*.p12
+*.pfx
+
+# CloudFormation outputs
+outputs.json
+stack-outputs.txt
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+node_modules/

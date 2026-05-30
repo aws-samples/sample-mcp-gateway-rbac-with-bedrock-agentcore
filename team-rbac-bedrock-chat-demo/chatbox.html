@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Gateway Demo - Team RBAC & Guardrails</title>
+    <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1544.0.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+            background: #f7f7f8;
+            min-height: 100vh;
+            display: flex;
+        }
+
+        /* Sidebar Styles */
+        .sidebar {
+            width: 280px;
+            background: #1e1e1e;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            border-right: 1px solid #333;
+        }
+
+        .sidebar-header {
+            padding: 16px;
+            border-bottom: 1px solid #333;
+        }
+
+        .sidebar-brand {
+            font-size: 18px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            margin-bottom: 16px;
+        }
+
+        .new-chat-btn {
+            width: 100%;
+            padding: 12px 16px;
+            background: #6e56cf;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+
+        .new-chat-btn:hover {
+            background: #7c66df;
+        }
+
+        .chat-history {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .chat-history-section {
+            margin-bottom: 20px;
+        }
+
+        .chat-history-title {
+            font-size: 11px;
+            color: #8e8ea0;
+            text-transform: uppercase;
+            padding: 8px 12px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .chat-history-item {
+            padding: 10px 12px;
+            margin: 2px 0;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #ececf1;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .chat-history-item:hover {
+            background: #2a2a2a;
+        }
+
+        .chat-history-item.active {
+            background: #2a2a2a;
+        }
+
+        .sidebar-footer {
+            padding: 12px;
+            border-top: 1px solid #333;
+        }
+
+        .user-profile {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .user-profile:hover {
+            background: #2a2a2a;
+        }
+
+        .user-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #6e56cf;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .user-name {
+            font-size: 14px;
+            color: #ececf1;
+        }
+
+        /* Main Content */
+        .main-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: white;
+        }
+
+        .top-bar {
+            padding: 12px 20px;
+            border-bottom: 1px solid #e5e5e5;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: white;
+        }
+
+        .model-selector {
+            padding: 6px 14px;
+            border: 1px solid #e5e5e5;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+            background: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            position: relative;
+        }
+
+        .model-selector:hover {
+            background: #f7f7f8;
+        }
+
+        .model-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            margin-top: 8px;
+            background: white;
+            border: 1px solid #e5e5e5;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            min-width: 320px;
+            z-index: 1000;
+            display: none;
+        }
+
+        .model-dropdown.show {
+            display: block;
+        }
+
+        .model-dropdown-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid #e5e5e5;
+            font-weight: 600;
+            font-size: 14px;
+            color: #2d2d2d;
+        }
+
+        .model-option {
+            padding: 12px 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-bottom: 1px solid #f7f7f8;
+        }
+
+        .model-option:last-child {
+            border-bottom: none;
+            border-radius: 0 0 12px 12px;
+        }
+
+        .model-option:hover {
+            background: #f7f7f8;
+        }
+
+        .model-option.active {
+            background: #eef2ff;
+            border-left: 3px solid #6e56cf;
+        }
+
+        .model-name {
+            font-weight: 600;
+            font-size: 14px;
+            color: #2d2d2d;
+            margin-bottom: 4px;
+        }
+
+        .model-description {
+            font-size: 12px;
+            color: #8e8ea0;
+        }
+
+        .model-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+
+        .model-badge.allowed {
+            background: #d4edda;
+            color: #28a745;
+        }
+
+        .model-badge.denied {
+            background: #f8d7da;
+            color: #dc3545;
+        }
+
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            max-width: 900px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .message {
+            margin-bottom: 24px;
+            display: flex;
+            gap: 16px;
+        }
+
+        .message-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .message.user .message-avatar {
+            background: #6e56cf;
+            color: white;
+        }
+
+        .message.assistant .message-avatar {
+            background: #10a37f;
+            color: white;
+        }
+
+        .message-content {
+            flex: 1;
+            line-height: 1.6;
+            font-size: 15px;
+            color: #2d2d2d;
+        }
+
+        .input-container {
+            padding: 20px;
+            border-top: 1px solid #e5e5e5;
+            max-width: 900px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .input-wrapper {
+            position: relative;
+            background: white;
+            border: 1px solid #d1d1d6;
+            border-radius: 24px;
+            display: flex;
+            align-items: flex-end;
+            transition: all 0.2s;
+            box-shadow: 0 0 0 0 rgba(110, 86, 207, 0);
+        }
+
+        .input-wrapper:focus-within {
+            border-color: #6e56cf;
+            box-shadow: 0 0 0 3px rgba(110, 86, 207, 0.1);
+        }
+
+        .chat-input {
+            flex: 1;
+            padding: 14px 20px;
+            border: none;
+            background: transparent;
+            font-size: 15px;
+            outline: none;
+            resize: none;
+            max-height: 200px;
+            font-family: inherit;
+            line-height: 1.5;
+        }
+
+        .send-button {
+            padding: 8px;
+            margin: 8px;
+            background: #6e56cf;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        .send-button:hover:not(:disabled) {
+            background: #7c66df;
+        }
+
+        .send-button:disabled {
+            background: #d1d1d6;
+            cursor: not-allowed;
+        }
+
+        .typing-indicator {
+            display: flex;
+            gap: 4px;
+            padding: 12px 0;
+        }
+
+        .typing-indicator span {
+            width: 8px;
+            height: 8px;
+            background: #10a37f;
+            border-radius: 50%;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% {
+                transform: translateY(0);
+                opacity: 0.4;
+            }
+            30% {
+                transform: translateY(-6px);
+                opacity: 1;
+            }
+        }
+
+        /* Team Selector Modal */
+        .team-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .team-modal.hidden {
+            display: none;
+        }
+
+        .team-modal-content {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            max-width: 500px;
+            width: 90%;
+        }
+
+        .team-modal-title {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 24px;
+            text-align: center;
+            color: #2d2d2d;
+        }
+
+        .team-options {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .team-option {
+            padding: 20px;
+            border: 2px solid #e5e5e5;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: white;
+        }
+
+        .team-option:hover {
+            border-color: #6e56cf;
+            background: #f7f7f8;
+        }
+
+        .team-option-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .team-option-desc {
+            font-size: 14px;
+            color: #8e8ea0;
+        }
+
+        /* Stats Bar */
+        .stats-bar {
+            display: flex;
+            gap: 12px;
+            padding: 12px 20px;
+            background: #f7f7f8;
+            border-bottom: 1px solid #e5e5e5;
+            font-size: 12px;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #666;
+        }
+
+        .stat-value {
+            font-weight: 600;
+            color: #2d2d2d;
+        }
+    </style>
+</head>
+<body>
+    <!-- Team Selection Modal -->
+    <div class="team-modal" id="teamModal">
+        <div class="team-modal-content">
+            <h2 class="team-modal-title">Select Your Team</h2>
+            <div class="team-options">
+                <div class="team-option" onclick="loginTeam('team-alpha')">
+                    <div class="team-option-title">🏢 Team Alpha</div>
+                    <div class="team-option-desc">Can use Haiku and Sonnet models</div>
+                </div>
+                <div class="team-option" onclick="loginTeam('team-beta')">
+                    <div class="team-option-title">🏪 Team Beta</div>
+                    <div class="team-option-desc">Can only use Haiku (cost-optimized)</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-brand">Chat</div>
+            <button class="new-chat-btn" onclick="showTeamModal()">
+                <span>+</span>
+                <span>New chat</span>
+            </button>
+        </div>
+
+        <div class="chat-history">
+            <div class="chat-history-section">
+                <div class="chat-history-title">Your conversations</div>
+                <div class="chat-history-item active">
+                    <span>💬</span>
+                    <span id="currentSessionName">LLM Gateway Demo</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="sidebar-footer">
+            <div class="user-profile" id="userProfile">
+                <div class="user-avatar" id="userAvatar">?</div>
+                <div class="user-name" id="userName">Select a team</div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-container">
+        <div class="top-bar">
+            <div class="model-selector" onclick="toggleModelDropdown()">
+                <span id="current-model-name">Claude 3.5 Haiku</span>
+                <span>▼</span>
+                <div class="model-dropdown" id="modelDropdown">
+                    <div class="model-dropdown-header">Select Model</div>
+                    <div class="model-option" onclick="selectModel('us.anthropic.claude-3-5-haiku-20241022-v1:0', 'Claude 3.5 Haiku', event)">
+                        <div class="model-name">
+                            Claude 3.5 Haiku
+                            <span class="model-badge allowed" id="badge-haiku">✓ Allowed</span>
+                        </div>
+                        <div class="model-description">Fast and cost-efficient</div>
+                    </div>
+                    <div class="model-option" onclick="selectModel('us.anthropic.claude-3-5-sonnet-20241022-v2:0', 'Claude 3.5 Sonnet', event)">
+                        <div class="model-name">
+                            Claude 3.5 Sonnet
+                            <span class="model-badge allowed" id="badge-sonnet">✓ Allowed</span>
+                        </div>
+                        <div class="model-description">Balanced performance</div>
+                    </div>
+                    <div class="model-option" onclick="selectModel('us.anthropic.claude-opus-4-20250514-v1:0', 'Claude Opus 4', event)">
+                        <div class="model-name">
+                            Claude Opus 4
+                            <span class="model-badge denied" id="badge-opus">✗ Denied</span>
+                        </div>
+                        <div class="model-description">Most capable</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="stats-bar" id="statsBar" style="display: none;">
+            <div class="stat-item">
+                <span>Requests:</span>
+                <span class="stat-value" id="requestCount">0</span>
+            </div>
+            <div class="stat-item">
+                <span>Input:</span>
+                <span class="stat-value" id="inputTokens">0</span>
+            </div>
+            <div class="stat-item">
+                <span>Output:</span>
+                <span class="stat-value" id="outputTokens">0</span>
+            </div>
+            <div class="stat-item">
+                <span>Cost:</span>
+                <span class="stat-value" id="totalCost">$0.00</span>
+            </div>
+        </div>
+
+        <div class="chat-container" id="chatMessages">
+            <div class="message assistant">
+                <div class="message-avatar">AI</div>
+                <div class="message-content">
+                    <p><strong>Welcome to the LLM Gateway Demo!</strong></p>
+                    <p>Select Team Alpha or Team Beta to get started and experience:</p>
+                    <ul style="margin: 10px 0; padding-left: 20px;">
+                        <li>Team-based model access control</li>
+                        <li>Cost tracking per team</li>
+                        <li>Centralized governance</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="input-container">
+            <div class="input-wrapper">
+                <textarea
+                    class="chat-input"
+                    id="chatInput"
+                    placeholder="Message Chat"
+                    rows="1"
+                    disabled
+                ></textarea>
+                <button class="send-button" id="sendButton" onclick="sendMessage()" disabled>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // ⚠️ CONFIGURATION REQUIRED
+        // Replace these placeholders with your deployed infrastructure values
+        const API_ENDPOINT = "https://YOUR_API_GATEWAY_ID.execute-api.us-east-1.amazonaws.com/prod/invoke";
+
+        const TEAMS = {
+            'team-alpha': {
+                name: "Team Alpha",
+                apiKey: "YOUR_TEAM_ALPHA_API_KEY_HERE",
+                color: "#232F3E"
+            },
+            'team-beta': {
+                name: "Team Beta",
+                apiKey: "YOUR_TEAM_BETA_API_KEY_HERE",
+                color: "#FF9900"
+            }
+        };
+
+        const MODELS = {
+            'us.anthropic.claude-3-5-haiku-20241022-v1:0': {
+                name: 'Claude 3.5 Haiku',
+                inputCost: 0.000003,
+                outputCost: 0.000015
+            },
+            'us.anthropic.claude-3-5-sonnet-20241022-v2:0': {
+                name: 'Claude 3.5 Sonnet',
+                inputCost: 0.000015,
+                outputCost: 0.000075
+            },
+            'us.anthropic.claude-opus-4-20250514-v1:0': {
+                name: 'Claude Opus 4',
+                inputCost: 0.000075,
+                outputCost: 0.000375
+            }
+        };
+
+        const TEAM_MODEL_PERMISSIONS = {
+            'team-alpha': [
+                'us.anthropic.claude-3-5-haiku-20241022-v1:0',
+                'us.anthropic.claude-3-5-sonnet-20241022-v2:0'
+            ],
+            'team-beta': [
+                'us.anthropic.claude-3-5-haiku-20241022-v1:0'
+            ]
+        };
+
+        let currentTeam = null;
+        let currentModel = 'us.anthropic.claude-3-5-haiku-20241022-v1:0';
+        let requestCount = 0;
+        let totalInputTokens = 0;
+        let totalOutputTokens = 0;
+        let totalCost = 0;
+
+        function showTeamModal() {
+            document.getElementById('teamModal').classList.remove('hidden');
+        }
+
+        function hideTeamModal() {
+            document.getElementById('teamModal').classList.add('hidden');
+        }
+
+        function loginTeam(teamKey) {
+            currentTeam = teamKey;
+            currentModel = 'us.anthropic.claude-3-5-haiku-20241022-v1:0';
+            document.getElementById('current-model-name').textContent = 'Claude 3.5 Haiku';
+            const team = TEAMS[teamKey];
+
+            hideTeamModal();
+
+            const userName = document.getElementById('userName');
+            const userAvatar = document.getElementById('userAvatar');
+            userName.textContent = team.name;
+            userAvatar.textContent = teamKey === 'team-alpha' ? 'A' : 'B';
+            userAvatar.style.background = team.color;
+
+            document.getElementById('statsBar').style.display = 'flex';
+            document.getElementById('chatInput').disabled = false;
+            document.getElementById('sendButton').disabled = false;
+
+            const chatMessages = document.getElementById('chatMessages');
+            chatMessages.innerHTML = '';
+            addMessage('assistant', `You are now logged in as <strong>${team.name}</strong>. Start chatting!`);
+
+            const allowedModels = TEAM_MODEL_PERMISSIONS[teamKey];
+            const modelList = allowedModels.map(m => MODELS[m].name).join(', ');
+            addMessage('system', `📋 Your allowed models: ${modelList}`);
+
+            updateModelBadges();
+
+            requestCount = 0;
+            totalInputTokens = 0;
+            totalOutputTokens = 0;
+            totalCost = 0;
+            updateStats();
+        }
+
+        function toggleModelDropdown() {
+            const dropdown = document.getElementById('modelDropdown');
+            dropdown.classList.toggle('show');
+            event.stopPropagation();
+        }
+
+        function selectModel(modelId, modelName, event) {
+            event.stopPropagation();
+
+            if (!currentTeam) {
+                addMessage('system', '⚠️ Please login as a team first before selecting a model.');
+                document.getElementById('modelDropdown').classList.remove('show');
+                return;
+            }
+
+            const allowedModels = TEAM_MODEL_PERMISSIONS[currentTeam];
+            const isAllowed = allowedModels.includes(modelId);
+
+            if (!isAllowed) {
+                addMessage('system', `⚠️ Warning: ${TEAMS[currentTeam].name} does not have access to ${modelName}. If you send a message, it will be DENIED by the gateway.`);
+            }
+
+            currentModel = modelId;
+            document.getElementById('current-model-name').textContent = modelName;
+
+            document.querySelectorAll('.model-option').forEach(opt => opt.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+
+            document.getElementById('modelDropdown').classList.remove('show');
+
+            addMessage('system', `✓ Model selected: ${modelName} ${isAllowed ? '(Allowed)' : '(⚠️ Not allowed for your team)'}`);
+        }
+
+        function updateModelBadges() {
+            if (!currentTeam) return;
+
+            const allowedModels = TEAM_MODEL_PERMISSIONS[currentTeam];
+
+            const haikuBadge = document.getElementById('badge-haiku');
+            const haikuAllowed = allowedModels.includes('us.anthropic.claude-3-5-haiku-20241022-v1:0');
+            haikuBadge.className = 'model-badge ' + (haikuAllowed ? 'allowed' : 'denied');
+            haikuBadge.textContent = haikuAllowed ? '✓ Allowed' : '✗ Denied';
+
+            const sonnetBadge = document.getElementById('badge-sonnet');
+            const sonnetAllowed = allowedModels.includes('us.anthropic.claude-3-5-sonnet-20241022-v2:0');
+            sonnetBadge.className = 'model-badge ' + (sonnetAllowed ? 'allowed' : 'denied');
+            sonnetBadge.textContent = sonnetAllowed ? '✓ Allowed' : '✗ Denied';
+
+            const opusBadge = document.getElementById('badge-opus');
+            const opusAllowed = allowedModels.includes('us.anthropic.claude-opus-4-20250514-v1:0');
+            opusBadge.className = 'model-badge ' + (opusAllowed ? 'allowed' : 'denied');
+            opusBadge.textContent = opusAllowed ? '✓ Allowed' : '✗ Denied';
+        }
+
+        document.addEventListener('click', function(event) {
+            const dropdown = document.getElementById('modelDropdown');
+            if (dropdown && !event.target.closest('.model-selector')) {
+                dropdown.classList.remove('show');
+            }
+        });
+
+        function addMessage(type, content, meta = null) {
+            const messagesDiv = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+
+            let avatarText, avatarColor;
+            if (type === 'system') {
+                avatarText = '⚙️';
+                avatarColor = '#FF9900';
+            } else if (type === 'user') {
+                avatarText = currentTeam === 'team-alpha' ? 'A' : 'B';
+                avatarColor = TEAMS[currentTeam]?.color || '#6e56cf';
+            } else {
+                avatarText = 'AI';
+                avatarColor = '#10a37f';
+            }
+
+            let metaHtml = '';
+            if (meta) {
+                metaHtml = `<div style="font-size: 12px; color: #8e8ea0; margin-top: 8px;">${meta}</div>`;
+            }
+
+            messageDiv.innerHTML = `
+                <div class="message-avatar" style="background: ${avatarColor}">${avatarText}</div>
+                <div class="message-content">
+                    ${content}
+                    ${metaHtml}
+                </div>
+            `;
+
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function addTypingIndicator() {
+            const messagesDiv = document.getElementById('chatMessages');
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'message assistant';
+            typingDiv.id = 'typingIndicator';
+            typingDiv.innerHTML = `
+                <div class="message-avatar" style="background: #10a37f">AI</div>
+                <div class="message-content">
+                    <div class="typing-indicator">
+                        <span></span><span></span><span></span>
+                    </div>
+                </div>
+            `;
+            messagesDiv.appendChild(typingDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function removeTypingIndicator() {
+            const indicator = document.getElementById('typingIndicator');
+            if (indicator) {
+                indicator.remove();
+            }
+        }
+
+        function updateStats() {
+            document.getElementById('requestCount').textContent = requestCount;
+            document.getElementById('inputTokens').textContent = totalInputTokens.toLocaleString();
+            document.getElementById('outputTokens').textContent = totalOutputTokens.toLocaleString();
+            document.getElementById('totalCost').textContent = `$${totalCost.toFixed(4)}`;
+        }
+
+        async function sendMessage() {
+            if (!currentTeam) {
+                alert('⚠️ Please login as Team Alpha or Team Beta first!');
+                return;
+            }
+
+            const input = document.getElementById('chatInput');
+            const prompt = input.value.trim();
+
+            if (!prompt) return;
+
+            const team = TEAMS[currentTeam];
+
+            addMessage('user', prompt);
+            input.value = '';
+            input.style.height = 'auto';
+
+            addTypingIndicator();
+
+            const startTime = Date.now();
+
+            try {
+                const response = await fetch(API_ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': team.apiKey
+                    },
+                    body: JSON.stringify({
+                        team: currentTeam,
+                        prompt: prompt,
+                        max_tokens: 200,
+                        model_id: currentModel
+                    })
+                });
+
+                const latency = Date.now() - startTime;
+
+                removeTypingIndicator();
+
+                if (response.status === 403) {
+                    const modelName = MODELS[currentModel]?.name || currentModel;
+                    addMessage('system', `🚫 MODEL ACCESS DENIED\n\n${team.name} attempted to use ${modelName}, but this model is not in your allowed list.\n\n⏱️ Latency: ${latency}ms\n\nThis demonstrates model governance - the gateway enforces access policies per team!`);
+                    return;
+                }
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    addMessage('system', `❌ Error: ${response.status} ${response.statusText}\n\n${errorText}`);
+                    return;
+                }
+
+                const result = await response.json();
+
+                if (result.response) {
+                    requestCount++;
+                    const usage = result.usage || {};
+                    const inputTokens = usage.input_tokens || 0;
+                    const outputTokens = usage.output_tokens || 0;
+
+                    totalInputTokens += inputTokens;
+                    totalOutputTokens += outputTokens;
+
+                    const modelPricing = MODELS[currentModel];
+                    const cost = (inputTokens * modelPricing.inputCost) + (outputTokens * modelPricing.outputCost);
+                    totalCost += cost;
+
+                    updateStats();
+
+                    let meta = `⏱️ ${latency}ms • 📥 ${inputTokens} tokens • 📤 ${outputTokens} tokens • 💰 $${cost.toFixed(6)}`;
+                    addMessage('assistant', result.response, meta);
+                } else {
+                    addMessage('assistant', `❌ Unexpected response format`);
+                }
+
+            } catch (error) {
+                console.error('Error:', error);
+                removeTypingIndicator();
+                addMessage('assistant', `❌ Network Error: ${error.message}`);
+            }
+        }
+
+        document.getElementById('chatInput').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        document.getElementById('chatInput').addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+        });
+    </script>
+</body>
+</html>

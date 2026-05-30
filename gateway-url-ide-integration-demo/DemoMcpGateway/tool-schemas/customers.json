@@ -1,0 +1,35 @@
+[
+  {
+    "name": "list_customers",
+    "description": "List all customers with optional filtering",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "Filter by status (active/inactive)",
+          "enum": ["active", "inactive"]
+        },
+        "type": {
+          "type": "string",
+          "description": "Filter by customer type",
+          "enum": ["business", "individual"]
+        }
+      }
+    }
+  },
+  {
+    "name": "get_customer_by_id",
+    "description": "Get customer details by customer ID",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "customer_id": {
+          "type": "string",
+          "description": "Customer ID (e.g., CUST-001)"
+        }
+      },
+      "required": ["customer_id"]
+    }
+  }
+]

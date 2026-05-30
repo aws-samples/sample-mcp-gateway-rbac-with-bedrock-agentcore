@@ -1,0 +1,82 @@
+[
+  {
+    "id": "CUST-001",
+    "name": "Acme Corporation",
+    "email": "contact@acme-corp.example.com",
+    "type": "business",
+    "status": "active",
+    "created": "2025-01-15",
+    "address": {
+      "street": "123 Business Ave",
+      "city": "San Francisco",
+      "state": "CA",
+      "zip": "94102",
+      "country": "USA"
+    },
+    "phone": "+1-555-0100"
+  },
+  {
+    "id": "CUST-002",
+    "name": "Global Industries",
+    "email": "info@global-industries.example.com",
+    "type": "business",
+    "status": "active",
+    "created": "2025-02-20",
+    "address": {
+      "street": "456 Enterprise Blvd",
+      "city": "New York",
+      "state": "NY",
+      "zip": "10001",
+      "country": "USA"
+    },
+    "phone": "+1-555-0200"
+  },
+  {
+    "id": "CUST-003",
+    "name": "Tech Innovations LLC",
+    "email": "hello@tech-innovations.example.com",
+    "type": "business",
+    "status": "active",
+    "created": "2025-03-10",
+    "address": {
+      "street": "789 Innovation Dr",
+      "city": "Austin",
+      "state": "TX",
+      "zip": "78701",
+      "country": "USA"
+    },
+    "phone": "+1-555-0300"
+  },
+  {
+    "id": "CUST-004",
+    "name": "John Smith",
+    "email": "john.smith@example.com",
+    "type": "individual",
+    "status": "active",
+    "created": "2025-04-05",
+    "address": {
+      "street": "321 Oak Street",
+      "city": "Seattle",
+      "state": "WA",
+      "zip": "98101",
+      "country": "USA"
+    },
+    "phone": "+1-555-0400"
+  },
+  {
+    "id": "CUST-005",
+    "name": "Jane Doe",
+    "email": "jane.doe@example.com",
+    "type": "individual",
+    "status": "inactive",
+    "created": "2024-12-01",
+    "address": {
+      "street": "654 Maple Ave",
+      "city": "Boston",
+      "state": "MA",
+      "zip": "02101",
+      "country": "USA"
+    },
+    "phone": "+1-555-0500"
+  }
+]
