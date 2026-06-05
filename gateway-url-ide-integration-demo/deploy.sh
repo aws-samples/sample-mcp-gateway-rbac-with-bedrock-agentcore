@@ -61,7 +61,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "STEP 2/5 — Deploying Lambda MCP servers..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-bash "$SCRIPT_DIR/lambda/mcp-servers/deploy-all.sh" "$REGION"
+bash "$SCRIPT_DIR/lambda/mcp-servers/deploy-oauth.sh" "$REGION" "mcp-demo"
 echo ""
 
 # ── Step 3: Create AgentCore Gateway (CUSTOM_JWT) ──

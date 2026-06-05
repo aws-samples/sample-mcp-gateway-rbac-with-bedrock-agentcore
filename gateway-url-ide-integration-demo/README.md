@@ -4,6 +4,23 @@
 
 This sample shows how to implement **tool-level role-based access control (RBAC)** for Model Context Protocol (MCP) servers using AWS Bedrock AgentCore Gateway and Cedar policies.
 
+## Two Auth Paths — Pick Your Fit
+
+| | Path A: IAM/SigV4 (this README) | Path B: OAuth/JWT + MCP Registry ([OAUTH_DEMO.md](OAUTH_DEMO.md)) |
+|---|---|---|
+| **Auth method** | IAM credentials + local SigV4 proxy | Native OAuth login in the IDE (browser popup) |
+| **Discovery** | Manual `mcp.json` config | MCP Registry URL → GitHub Copilot admin field |
+| **Local install** | SigV4 proxy process | Nothing — fully remote |
+| **Identity source** | IAM user tags | JWT claims (Cognito / any OIDC IdP) |
+| **Deploy** | `agentcore deploy` + IAM users | `./deploy.sh` (one command) |
+| **Best for** | Quick local testing, internal tooling | Enterprise GitHub Copilot governance, BIS-policy compliance |
+
+**Both paths** use the same AgentCore Gateway + Cedar policies + Lambda MCP servers. Only the auth and discovery layer differs.
+
+**👉 For the enterprise "registry URL + native login" path:** See **[OAUTH_DEMO.md](OAUTH_DEMO.md)**
+
+---
+
 ## The Problem
 
 Your organization wants to give developers AI coding assistants (like GitHub Copilot) with access to internal tools:
