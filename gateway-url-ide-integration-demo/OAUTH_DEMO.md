@@ -39,30 +39,25 @@ This is the **OAuth path** of the demo. Compared to the IAM/SigV4 path (which us
 
 ## One-Click Deploy
 
-```bash
-./deploy.sh           # defaults to us-east-1
-./deploy.sh eu-west-1 # or specify a region
-```
+> **Note:** The automated `./deploy.sh` uses the **IAM/SigV4 path** (no credentials exposed).
+> The OAuth/Cognito path below is a **manual setup guide** for customers who need native
+> IDE login without a local proxy. Follow these steps after the base IAM deploy is working.
 
-This single command creates everything:
-1. Cognito User Pool + pre-token Lambda (injects `team` claim)
-2. MCP Registry Lambda + API Gateway (serves GitHub Copilot v0.1 spec)
-3. Lambda MCP servers (products, orders, customers, jira)
-4. AgentCore Gateway (CUSTOM_JWT auth)
-5. Cedar policies (per-team RBAC)
-6. Two test users (alice = Engineering, bob = Support)
+### Adding Cognito to your deployment
 
-**Output:**
-```
-╔══════════════════════════════════════════════════════════════╗
-║  ✅ DEPLOYMENT COMPLETE
-║  Registry URL: https://xxx.execute-api.us-east-1.amazonaws.com/prod
-║  Gateway URL:  https://xxx.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp
-║  Test credentials:
-║    alice@example.com / DemoPass123!  (team: Engineering)
-║    bob@example.com   / DemoPass123!  (team: Support)
-╚══════════════════════════════════════════════════════════════╝
-```
+1. Create a Cognito User Pool with a `custom:team` attribute
+2. Create a pre-token Lambda that injects the `team` claim into the access token
+3. Create a CUSTOM_JWT gateway (or update the existing one) pointing at the Cognito issuer
+4. Register VS Code redirect URIs as Cognito callback URLs:
+   - `http://127.0.0.1:33418`
+   - `http://localhost:33418`
+   - `vscode://vscode.github-authentication/did-authenticate`
+5. Create users with `custom:team` set to your team names
+6. Update Cedar policies to read `principal.getTag("team")` instead of `principal.getTag("group")`
+
+See `infrastructure/cloudformation/oauth-registry-stack.yaml` for a reference
+CloudFormation template that does all of this. It's not wired into `deploy.sh`
+by default to avoid exposing credentials in terminal output.
 
 ---
 
