@@ -1,0 +1,396 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  MCP Registry + OAuth (Cognito) infrastructure for AgentCore Gateway demo.
+  Deploys: Cognito User Pool, Pre-Token Lambda, Registry Lambda, API Gateway.
+
+Parameters:
+  StackPrefix:
+    Type: String
+    Default: mcp-demo
+    Description: Prefix for all resource names
+
+Resources:
+  # ═══════════════════════════════════════════════════════════════
+  # COGNITO USER POOL + PRE-TOKEN LAMBDA
+  # ═══════════════════════════════════════════════════════════════
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${StackPrefix}-user-pool"
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: true
+        - Name: team
+          AttributeDataType: String
+          Mutable: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      LambdaConfig:
+        PreTokenGenerationConfig:
+          LambdaArn: !GetAtt PreTokenLambda.Arn
+          LambdaVersion: V2_0
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub "${StackPrefix}-${AWS::AccountId}"
+      UserPoolId: !Ref UserPool
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${StackPrefix}-vscode-client"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - http://localhost:33418
+        - http://127.0.0.1:33418
+        - "vscode://vscode.github-authentication/did-authenticate"
+        - "vscode-insiders://vscode.github-authentication/did-authenticate"
+
+  UserPoolResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      Identifier: agentcore-gateway
+      Name: AgentCore Gateway
+      UserPoolId: !Ref UserPool
+      Scopes:
+        - ScopeName: mcp.invoke
+          ScopeDescription: Invoke MCP tools via the gateway
+
+  # Pre-Token Generation Lambda — injects "team" claim into access token
+  PreTokenLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${StackPrefix}-pretoken-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  PreTokenLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${StackPrefix}-pretoken"
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt PreTokenLambdaRole.Arn
+      Timeout: 5
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              """Inject custom:team attribute as a top-level 'team' claim in the access token."""
+              user_attrs = event.get('request', {}).get('userAttributes', {})
+              team = user_attrs.get('custom:team', 'unknown')
+              
+              event['response'] = {
+                  'claimsAndScopeOverrideDetails': {
+                      'accessTokenGeneration': {
+                          'claimsToAddOrOverride': {
+                              'team': team
+                          }
+                      }
+                  }
+              }
+              return event
+
+  PreTokenLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PreTokenLambda
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  # ═══════════════════════════════════════════════════════════════
+  # MCP REGISTRY LAMBDA + API GATEWAY
+  # ═══════════════════════════════════════════════════════════════
+
+  RegistryLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${StackPrefix}-registry-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  RegistryLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${StackPrefix}-registry"
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt RegistryLambdaRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          GATEWAY_URL: "PLACEHOLDER_UPDATED_BY_DEPLOY_SCRIPT"
+          COGNITO_ISSUER: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+      Code:
+        ZipFile: |
+          import json
+          import os
+
+          def handler(event, context):
+              """
+              MCP Registry v0.1 — serves the shape GitHub Copilot expects.
+              GET /v0.1/servers → list all registered MCP servers
+              GET /v0.1/servers/{name}/versions/latest → single server detail
+              
+              The gateway URL and auth server are injected via environment variables.
+              Customize the SERVERS list to match your organization's tools.
+              """
+              gateway_url = os.environ.get('GATEWAY_URL', 'https://YOUR-GATEWAY.gateway.bedrock-agentcore.us-east-1.amazonaws.com')
+              cognito_issuer = os.environ.get('COGNITO_ISSUER', '')
+              
+              # ── Define your MCP servers here ──
+              SERVERS = [
+                  {
+                      "server": {
+                          "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+                          "name": "com.example/products-mcp",
+                          "title": "Products MCP",
+                          "description": "Read-only product catalog — list and search products.",
+                          "version": "1.0.0",
+                          "remotes": [{"type": "streamable-http", "url": f"{gateway_url}/mcp"}]
+                      },
+                      "_meta": {
+                          "auth": {"type": "oauth2", "authorizationServer": cognito_issuer},
+                          "provider": "AWS Bedrock AgentCore",
+                          "deployment": "remote (no local install)",
+                          "rbac": "Cedar policies at gateway (per-team, per-tool)",
+                          "registrationPhase": "RECOMMENDED",
+                          "card": {
+                              "owningTeam": "Engineering",
+                              "supportEntity": "engineering@example.com",
+                              "license": "Internal",
+                              "capabilities": ["list_products", "search_products", "get_product_by_id"],
+                              "accessGroups": ["Engineering", "Support"]
+                          }
+                      }
+                  },
+                  {
+                      "server": {
+                          "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+                          "name": "com.example/orders-mcp",
+                          "title": "Orders MCP",
+                          "description": "Order management — list and create orders.",
+                          "version": "1.0.0",
+                          "remotes": [{"type": "streamable-http", "url": f"{gateway_url}/mcp"}]
+                      },
+                      "_meta": {
+                          "auth": {"type": "oauth2", "authorizationServer": cognito_issuer},
+                          "provider": "AWS Bedrock AgentCore",
+                          "deployment": "remote (no local install)",
+                          "rbac": "Cedar policies at gateway (per-team, per-tool)",
+                          "registrationPhase": "SUPPORTED",
+                          "card": {
+                              "owningTeam": "Commerce",
+                              "supportEntity": "commerce@example.com",
+                              "license": "Internal",
+                              "capabilities": ["list_orders", "get_order_by_id", "create_order"],
+                              "accessGroups": ["Engineering"]
+                          }
+                      }
+                  },
+                  {
+                      "server": {
+                          "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+                          "name": "com.example/customers-mcp",
+                          "title": "Customers MCP",
+                          "description": "Customer data — list and lookup customers.",
+                          "version": "1.0.0",
+                          "remotes": [{"type": "streamable-http", "url": f"{gateway_url}/mcp"}]
+                      },
+                      "_meta": {
+                          "auth": {"type": "oauth2", "authorizationServer": cognito_issuer},
+                          "provider": "AWS Bedrock AgentCore",
+                          "deployment": "remote (no local install)",
+                          "rbac": "Cedar policies at gateway (per-team, per-tool)",
+                          "registrationPhase": "RECOMMENDED",
+                          "card": {
+                              "owningTeam": "Support",
+                              "supportEntity": "support@example.com",
+                              "license": "Internal",
+                              "capabilities": ["list_customers", "get_customer_by_id"],
+                              "accessGroups": ["Engineering", "Support"]
+                          }
+                      }
+                  },
+                  {
+                      "server": {
+                          "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+                          "name": "com.example/jira-mcp",
+                          "title": "Jira MCP",
+                          "description": "Jira ticket lookup — list tickets by project or assignee.",
+                          "version": "0.9.0",
+                          "remotes": [{"type": "streamable-http", "url": f"{gateway_url}/mcp"}]
+                      },
+                      "_meta": {
+                          "auth": {"type": "oauth2", "authorizationServer": cognito_issuer},
+                          "provider": "AWS Bedrock AgentCore",
+                          "deployment": "remote (no local install)",
+                          "rbac": "Cedar policies at gateway (per-team, per-tool)",
+                          "registrationPhase": "UNDER_ASSESSMENT",
+                          "card": {
+                              "owningTeam": "DevOps",
+                              "supportEntity": "devops@example.com",
+                              "license": "Internal",
+                              "capabilities": ["list_jira_tickets"],
+                              "accessGroups": ["Support"]
+                          }
+                      }
+                  }
+              ]
+
+              # ── Route handling ──
+              path = event.get('path', '') or event.get('rawPath', '')
+              method = event.get('httpMethod', '') or event.get('requestContext', {}).get('http', {}).get('method', '')
+              
+              # CORS headers (required by GitHub Copilot)
+              headers = {
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+              }
+              
+              if method == 'OPTIONS':
+                  return {'statusCode': 204, 'headers': headers, 'body': ''}
+              
+              # GET /v0.1/servers — list all
+              if '/v0.1/servers' in path and '/versions' not in path:
+                  # Optional phase filter
+                  params = event.get('queryStringParameters') or {}
+                  phase = params.get('phase')
+                  filtered = SERVERS if not phase else [
+                      s for s in SERVERS if s['_meta'].get('registrationPhase', '').upper() == phase.upper()
+                  ]
+                  body = json.dumps({"servers": filtered, "metadata": {"count": len(filtered)}})
+                  return {'statusCode': 200, 'headers': headers, 'body': body}
+              
+              # GET /v0.1/servers/{name}/versions/latest (or /{version})
+              if '/versions/' in path:
+                  parts = path.split('/v0.1/servers/')
+                  if len(parts) > 1:
+                      import urllib.parse
+                      name = urllib.parse.unquote(parts[1].split('/versions')[0])
+                      match = next((s for s in SERVERS if s['server']['name'] == name), None)
+                      if match:
+                          return {'statusCode': 200, 'headers': headers, 'body': json.dumps(match)}
+                  return {'statusCode': 404, 'headers': headers, 'body': json.dumps({"error": "Server not found"})}
+              
+              return {'statusCode': 404, 'headers': headers, 'body': json.dumps({"error": "Not found"})}
+
+  RegistryLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RegistryLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RegistryApi}/*"
+
+  # API Gateway (REST) for the registry
+  RegistryApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub "${StackPrefix}-registry-api"
+      Description: MCP Registry v0.1 — serves the catalog GitHub Copilot expects
+
+  RegistryApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RegistryApi
+      ParentId: !GetAtt RegistryApi.RootResourceId
+      PathPart: "{proxy+}"
+
+  RegistryApiMethodAny:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RegistryApi
+      ResourceId: !Ref RegistryApiResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegistryLambda.Arn}/invocations"
+
+  RegistryApiMethodRoot:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RegistryApi
+      ResourceId: !GetAtt RegistryApi.RootResourceId
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegistryLambda.Arn}/invocations"
+
+  RegistryApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - RegistryApiMethodAny
+      - RegistryApiMethodRoot
+    Properties:
+      RestApiId: !Ref RegistryApi
+
+  RegistryApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref RegistryApi
+      DeploymentId: !Ref RegistryApiDeployment
+      StageName: prod
+
+Outputs:
+  CognitoUserPoolId:
+    Value: !Ref UserPool
+  CognitoClientId:
+    Value: !Ref UserPoolClient
+  CognitoDomain:
+    Value: !Sub "${StackPrefix}-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com"
+  CognitoIssuer:
+    Value: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+  RegistryUrl:
+    Value: !Sub "https://${RegistryApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+    Description: Paste this URL into the GitHub Copilot admin MCP Registry field
+  RegistryLambdaArn:
+    Value: !GetAtt RegistryLambda.Arn
+  PreTokenLambdaArn:
+    Value: !GetAtt PreTokenLambda.Arn
