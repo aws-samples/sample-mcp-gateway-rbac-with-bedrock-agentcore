@@ -1,0 +1,568 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Demo #1: AgentCore Gateway with VS Code + Cedar RBAC
+
+  Provisions:
+  - Lambda MCP servers (ecommerce, products, orders, jira)
+  - MCP Registry API Gateway (for GitHub Copilot discovery)
+  - IAM roles for developer personas (ReadOnly, FullAccess)
+  - Cedar policy resources (stored in S3)
+  - CloudWatch metrics and alarms
+
+  NOTE: AgentCore Gateway itself is deployed via 'agentcore deploy' CLI command
+  This template provisions the Lambda MCPs that the gateway will invoke.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Project name prefix
+
+  Environment:
+    Type: String
+    Description: Environment
+
+  ArtifactBucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment packages
+
+  MCPServersToInclude:
+    Type: CommaDelimitedList
+    Description: Comma-separated list of MCP servers to deploy
+
+  EnableCedarPolicies:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Description: Deploy Cedar policy resources
+
+  LogRetentionDays:
+    Type: Number
+    Description: CloudWatch Logs retention days
+
+  EnableXRayTracing:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Description: Enable X-Ray tracing
+
+Conditions:
+  DeployEcommerceMcp: !Or
+    - !Equals [!Select [0, !Ref MCPServersToInclude], 'ecommerce']
+    - !Equals [!Select [1, !Ref MCPServersToInclude], 'ecommerce']
+    - !Equals [!Select [2, !Ref MCPServersToInclude], 'ecommerce']
+    - !Equals [!Select [3, !Ref MCPServersToInclude], 'ecommerce']
+
+  DeployProductsMcp: !Or
+    - !Equals [!Select [0, !Ref MCPServersToInclude], 'products']
+    - !Equals [!Select [1, !Ref MCPServersToInclude], 'products']
+    - !Equals [!Select [2, !Ref MCPServersToInclude], 'products']
+    - !Equals [!Select [3, !Ref MCPServersToInclude], 'products']
+
+  DeployOrdersMcp: !Or
+    - !Equals [!Select [0, !Ref MCPServersToInclude], 'orders']
+    - !Equals [!Select [1, !Ref MCPServersToInclude], 'orders']
+    - !Equals [!Select [2, !Ref MCPServersToInclude], 'orders']
+    - !Equals [!Select [3, !Ref MCPServersToInclude], 'orders']
+
+  DeployJiraMcp: !Or
+    - !Equals [!Select [0, !Ref MCPServersToInclude], 'jira']
+    - !Equals [!Select [1, !Ref MCPServersToInclude], 'jira']
+    - !Equals [!Select [2, !Ref MCPServersToInclude], 'jira']
+    - !Equals [!Select [3, !Ref MCPServersToInclude], 'jira']
+
+  ShouldDeployCedar: !Equals [!Ref EnableCedarPolicies, 'true']
+  EnableXRay: !Equals [!Ref EnableXRayTracing, 'true']
+
+Resources:
+  # ============================================================
+  # IAM Roles for Lambda MCP Servers
+  # ============================================================
+  MCPServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-mcp-server-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - !If
+          - EnableXRay
+          - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+          - !Ref AWS::NoValue
+      Policies:
+        - PolicyName: BedrockGuardrailAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:ApplyGuardrail
+                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:guardrail/*'
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${Environment}-*'
+
+  # ============================================================
+  # Lambda MCP Servers
+  # ============================================================
+  EcommerceMcpFunction:
+    Type: AWS::Lambda::Function
+    Condition: DeployEcommerceMcp
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-ecommerce-mcp'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt MCPServerRole.Arn
+      Timeout: 15
+      MemorySize: 256
+      ReservedConcurrentExecutions: 10
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: lambda/mcp-servers/ecommerce-mcp.zip
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+          PROJECT_NAME: !Ref ProjectName
+          ENVIRONMENT: !Ref Environment
+      TracingConfig:
+        Mode: !If [EnableXRay, Active, PassThrough]
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: MCPServer
+          Value: ecommerce
+
+  EcommerceMcpLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: DeployEcommerceMcp
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${EcommerceMcpFunction}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  ProductsMcpFunction:
+    Type: AWS::Lambda::Function
+    Condition: DeployProductsMcp
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-products-mcp'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt MCPServerRole.Arn
+      Timeout: 15
+      MemorySize: 256
+      ReservedConcurrentExecutions: 10
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: lambda/mcp-servers/products-mcp.zip
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+          PROJECT_NAME: !Ref ProjectName
+          ENVIRONMENT: !Ref Environment
+      TracingConfig:
+        Mode: !If [EnableXRay, Active, PassThrough]
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: MCPServer
+          Value: products
+
+  ProductsMcpLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: DeployProductsMcp
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ProductsMcpFunction}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  OrdersMcpFunction:
+    Type: AWS::Lambda::Function
+    Condition: DeployOrdersMcp
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-orders-mcp'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt MCPServerRole.Arn
+      Timeout: 15
+      MemorySize: 256
+      ReservedConcurrentExecutions: 10
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: lambda/mcp-servers/orders-mcp.zip
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+          PROJECT_NAME: !Ref ProjectName
+          ENVIRONMENT: !Ref Environment
+      TracingConfig:
+        Mode: !If [EnableXRay, Active, PassThrough]
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: MCPServer
+          Value: orders
+
+  OrdersMcpLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: DeployOrdersMcp
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${OrdersMcpFunction}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  JiraMcpFunction:
+    Type: AWS::Lambda::Function
+    Condition: DeployJiraMcp
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-jira-mcp'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt MCPServerRole.Arn
+      Timeout: 15
+      MemorySize: 256
+      ReservedConcurrentExecutions: 10
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: lambda/mcp-servers/jira-mcp.zip
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+          PROJECT_NAME: !Ref ProjectName
+          ENVIRONMENT: !Ref Environment
+      TracingConfig:
+        Mode: !If [EnableXRay, Active, PassThrough]
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: MCPServer
+          Value: jira
+
+  JiraMcpLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: DeployJiraMcp
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${JiraMcpFunction}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ============================================================
+  # MCP Registry API Gateway (for GitHub Copilot)
+  # ============================================================
+  RegistryLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-registry-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  RegistryLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-mcp-registry'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt RegistryLambdaRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          GATEWAY_URL: PLACEHOLDER  # Updated by deploy script or manually
+          PROJECT_NAME: !Ref ProjectName
+      Code:
+        ZipFile: |
+          import json, os, urllib.parse
+
+          def handler(event, context):
+              gateway_url = os.environ.get('GATEWAY_URL', 'https://YOUR-GATEWAY/mcp')
+              project_name = os.environ.get('PROJECT_NAME', 'demo')
+
+              SERVERS = [
+                  _server("com.example/ecommerce-mcp", "Ecommerce MCP",
+                          "Customer data — list and lookup customers.", "1.0.0",
+                          ["list_customers","get_customer_by_id"],
+                          "RECOMMENDED", "Support"),
+                  _server("com.example/products-mcp", "Products MCP",
+                          "Product catalog — list, search, get products.", "1.0.0",
+                          ["list_products","search_products","get_product_by_id"],
+                          "RECOMMENDED", "Engineering"),
+                  _server("com.example/orders-mcp", "Orders MCP",
+                          "Order management — list, get, create orders.", "1.0.0",
+                          ["list_orders","get_order_by_id","create_order"],
+                          "SUPPORTED", "Commerce"),
+                  _server("com.example/jira-mcp", "Jira MCP",
+                          "Jira ticket lookup.", "0.9.0",
+                          ["list_jira_tickets"],
+                          "UNDER_ASSESSMENT", "DevOps"),
+              ]
+
+              path = event.get('path','') or event.get('rawPath','')
+              method = event.get('httpMethod','') or event.get('requestContext',{}).get('http',{}).get('method','')
+              headers = {
+                  'Content-Type':'application/json',
+                  'Access-Control-Allow-Origin':'*',
+                  'Access-Control-Allow-Methods':'GET, OPTIONS',
+                  'Access-Control-Allow-Headers':'Authorization, Content-Type',
+              }
+              if method == 'OPTIONS':
+                  return {'statusCode':204,'headers':headers,'body':''}
+              if '/v0.1/servers' in path and '/versions' not in path:
+                  params = event.get('queryStringParameters') or {}
+                  phase = params.get('phase')
+                  filtered = SERVERS if not phase else [s for s in SERVERS if s['_meta'].get('registrationPhase','').upper()==phase.upper()]
+                  return {'statusCode':200,'headers':headers,'body':json.dumps({"servers":filtered,"metadata":{"count":len(filtered)}})}
+              if '/versions/' in path:
+                  parts = path.split('/v0.1/servers/')
+                  if len(parts)>1:
+                      name = urllib.parse.unquote(parts[1].split('/versions')[0])
+                      match = next((s for s in SERVERS if s['server']['name']==name),None)
+                      if match:
+                          return {'statusCode':200,'headers':headers,'body':json.dumps(match)}
+                  return {'statusCode':404,'headers':headers,'body':json.dumps({"error":"Not found"})}
+              return {'statusCode':404,'headers':headers,'body':json.dumps({"error":"Not found"})}
+
+          def _server(name, title, desc, ver, caps, phase, team):
+              gateway_url = os.environ.get('GATEWAY_URL','')
+              return {
+                  "server": {
+                      "$schema":"https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+                      "name":name,"title":title,"description":desc,"version":ver,
+                      "remotes":[{"type":"streamable-http","url":f"{gateway_url}/mcp"}]
+                  },
+                  "_meta": {
+                      "provider":"AWS Bedrock AgentCore",
+                      "deployment":"remote (no local install)",
+                      "rbac":"Cedar policies at gateway",
+                      "registrationPhase":phase,
+                      "card":{"owningTeam":team,"capabilities":caps}
+                  }
+              }
+
+  RegistryLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RegistryLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RegistryApi}/*'
+
+  RegistryApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-mcp-registry'
+      Description: MCP Registry v0.1 — GitHub Copilot catalog endpoint
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  RegistryApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RegistryApi
+      ParentId: !GetAtt RegistryApi.RootResourceId
+      PathPart: '{proxy+}'
+
+  RegistryApiMethodAny:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RegistryApi
+      ResourceId: !Ref RegistryApiResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegistryLambda.Arn}/invocations'
+
+  RegistryApiMethodRoot:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RegistryApi
+      ResourceId: !GetAtt RegistryApi.RootResourceId
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegistryLambda.Arn}/invocations'
+
+  RegistryApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - RegistryApiMethodAny
+      - RegistryApiMethodRoot
+    Properties:
+      RestApiId: !Ref RegistryApi
+
+  RegistryApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref RegistryApi
+      DeploymentId: !Ref RegistryApiDeployment
+      StageName: prod
+      Description: Production stage for MCP Registry
+      TracingEnabled: !If [EnableXRay, true, false]
+
+  # ============================================================
+  # IAM Roles for Developer Personas
+  # ============================================================
+  ReadOnlyDeveloperRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-readonly-developer'
+      Description: IAM role for junior developers with read-only MCP access
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'sts:ExternalId': !Sub '${ProjectName}-readonly'
+      Tags:
+        - Key: group
+          Value: ReadOnly
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  FullAccessDeveloperRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-fullaccess-developer'
+      Description: IAM role for senior developers with full MCP access
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'sts:ExternalId': !Sub '${ProjectName}-fullaccess'
+      Tags:
+        - Key: group
+          Value: FullAccess
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================
+  # Cedar Policy Storage (S3)
+  # ============================================================
+  CedarPolicyBucket:
+    Type: AWS::S3::Bucket
+    Condition: ShouldDeployCedar
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-cedar-policies-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  # Stack Info
+  StackName:
+    Description: Stack name
+    Value: !Ref AWS::StackName
+
+  # MCP Registry
+  RegistryUrl:
+    Description: MCP Registry URL for GitHub Copilot
+    Value: !Sub 'https://${RegistryApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: !Sub '${AWS::StackName}-RegistryUrl'
+
+  RegistryApiId:
+    Description: API Gateway ID for MCP Registry
+    Value: !Ref RegistryApi
+
+  # Lambda Functions
+  EcommerceMcpArn:
+    Condition: DeployEcommerceMcp
+    Description: Ecommerce MCP Lambda ARN
+    Value: !GetAtt EcommerceMcpFunction.Arn
+
+  ProductsMcpArn:
+    Condition: DeployProductsMcp
+    Description: Products MCP Lambda ARN
+    Value: !GetAtt ProductsMcpFunction.Arn
+
+  OrdersMcpArn:
+    Condition: DeployOrdersMcp
+    Description: Orders MCP Lambda ARN
+    Value: !GetAtt OrdersMcpFunction.Arn
+
+  JiraMcpArn:
+    Condition: DeployJiraMcp
+    Description: Jira MCP Lambda ARN
+    Value: !GetAtt JiraMcpFunction.Arn
+
+  MCPServerCount:
+    Description: Number of MCP servers deployed
+    Value: !If
+      - DeployEcommerceMcp
+      - !If [DeployProductsMcp, !If [DeployOrdersMcp, !If [DeployJiraMcp, 4, 3], !If [DeployJiraMcp, 3, 2]], !If [DeployOrdersMcp, !If [DeployJiraMcp, 3, 2], !If [DeployJiraMcp, 2, 1]]]
+      - !If [DeployProductsMcp, !If [DeployOrdersMcp, !If [DeployJiraMcp, 3, 2], !If [DeployJiraMcp, 2, 1]], !If [DeployOrdersMcp, !If [DeployJiraMcp, 2, 1], !If [DeployJiraMcp, 1, 0]]]
+
+  # IAM Roles
+  ReadOnlyDeveloperRoleArn:
+    Description: IAM role ARN for read-only developers
+    Value: !GetAtt ReadOnlyDeveloperRole.Arn
+
+  FullAccessDeveloperRoleArn:
+    Description: IAM role ARN for full-access developers
+    Value: !GetAtt FullAccessDeveloperRole.Arn
+
+  # Cedar Policies
+  CedarPolicyBucketName:
+    Condition: ShouldDeployCedar
+    Description: S3 bucket for Cedar policies
+    Value: !Ref CedarPolicyBucket
+
+  # Next Steps
+  DeploymentInstructions:
+    Description: Next steps after CloudFormation deployment
+    Value: !Sub |
+      1. Package Lambda functions: cd lambda/mcp-servers && ./deploy-all.sh
+      2. Deploy AgentCore Gateway: cd DemoMcpGateway/agentcore && agentcore deploy
+      3. Update registry Lambda with gateway URL: aws lambda update-function-configuration --function-name ${RegistryLambda} --environment Variables={GATEWAY_URL=<your-gateway-url>}
+      4. Configure VS Code: Copy vscode-config/mcp.json and update with registry URL: ${RegistryApi}.execute-api.${AWS::Region}.amazonaws.com/prod
