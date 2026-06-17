@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Unified Monitoring Dashboard for Bedrock Governance Demos
+
+  Creates CloudWatch dashboards showing:
+  - Lambda invocation metrics
+  - API Gateway performance
+  - Bedrock usage and costs
+  - WAF blocked requests
+  - Team-specific usage patterns
+
+Parameters:
+  ProjectName:
+    Type: String
+  Environment:
+    Type: String
+  Demo1Deployed:
+    Type: String
+  Demo2Deployed:
+    Type: String
+  Demo1StackName:
+    Type: String
+    Default: 'NONE'
+  Demo2StackName:
+    Type: String
+    Default: 'NONE'
+
+Conditions:
+  HasDemo1: !Equals [!Ref Demo1Deployed, 'true']
+  HasDemo2: !Equals [!Ref Demo2Deployed, 'true']
+
+Resources:
+  UnifiedDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${ProjectName}-${Environment}-unified'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  [ "AWS/Lambda", "Invocations", { "stat": "Sum", "period": 300 } ],
+                  [ ".", "Errors", { "stat": "Sum", "period": 300 } ],
+                  [ ".", "Duration", { "stat": "Average", "period": 300 } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Lambda Performance",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  [ "AWS/Bedrock", "ModelInvocations", { "stat": "Sum", "period": 300 } ],
+                  [ ".", "ModelInvocationThrottle", { "stat": "Sum", "period": 300 } ],
+                  [ ".", "ModelInputTokenCount", { "stat": "Sum", "period": 300 } ],
+                  [ ".", "ModelOutputTokenCount", { "stat": "Sum", "period": 300 } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Bedrock Usage",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApiGateway", "Count", { "stat": "Sum", "period": 300 } ],
+                  [ ".", "4XXError", { "stat": "Sum", "period": 300 } ],
+                  [ ".", "5XXError", { "stat": "Sum", "period": 300 } ],
+                  [ ".", "Latency", { "stat": "Average", "period": 300 } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "API Gateway Metrics",
+                "period": 300
+              }
+            },
+            {
+              "type": "log",
+              "properties": {
+                "query": "SOURCE '/aws/lambda/${ProjectName}-${Environment}-demo2-gateway-proxy'\n| fields @timestamp, @message\n| filter @message like /TEAM/\n| stats count() by team",
+                "region": "${AWS::Region}",
+                "title": "Requests by Team",
+                "stacked": false,
+                "view": "table"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  DashboardUrl:
+    Description: CloudWatch dashboard URL
+    Value: !Sub 'https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${UnifiedDashboard}'

@@ -1,0 +1,297 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Shared Resources for Bedrock Governance Demos
+
+  Provisions common infrastructure used by both demos:
+  - CloudWatch Log Groups with retention policies
+  - IAM managed policies for Bedrock access
+  - SSM Parameters for configuration
+  - SNS topics for alerts (optional)
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Project name prefix
+
+  Environment:
+    Type: String
+    Description: Environment (dev/staging/prod)
+
+  LogRetentionDays:
+    Type: Number
+    Description: CloudWatch Logs retention in days
+
+  EnableXRayTracing:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Description: Enable X-Ray tracing
+
+Conditions:
+  EnableXRay: !Equals [!Ref EnableXRayTracing, 'true']
+
+Resources:
+  # ============================================================
+  # CloudWatch Log Groups
+  # ============================================================
+  Demo1LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ProjectName}-${Environment}-demo1'
+      RetentionInDays: !Ref LogRetentionDays
+
+  Demo2LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ProjectName}-${Environment}-demo2'
+      RetentionInDays: !Ref LogRetentionDays
+
+  ApiGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/${ProjectName}-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ============================================================
+  # IAM Managed Policies
+  # ============================================================
+  BedrockInvokePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${ProjectName}-${Environment}-bedrock-invoke'
+      Description: Allow invoking Bedrock models
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: InvokeBedrockModels
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+            Resource:
+              - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-*'
+              - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-*'
+          - Sid: ListModels
+            Effect: Allow
+            Action:
+              - bedrock:ListFoundationModels
+              - bedrock:GetFoundationModel
+            Resource: '*'
+
+  BedrockGuardrailPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${ProjectName}-${Environment}-bedrock-guardrails'
+      Description: Allow using Bedrock Guardrails
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: UseGuardrails
+            Effect: Allow
+            Action:
+              - bedrock:ApplyGuardrail
+            Resource: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:guardrail/*'
+          - Sid: ListGuardrails
+            Effect: Allow
+            Action:
+              - bedrock:ListGuardrails
+              - bedrock:GetGuardrail
+            Resource: '*'
+
+  LambdaCloudWatchLogsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${ProjectName}-${Environment}-lambda-logs'
+      Description: Lambda CloudWatch Logs access
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CreateLogGroups
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+            Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+          - Sid: WriteToLogs
+            Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource:
+              - !Sub '${Demo1LogGroup.Arn}:*'
+              - !Sub '${Demo2LogGroup.Arn}:*'
+
+  XRayTracingPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: EnableXRay
+    Properties:
+      ManagedPolicyName: !Sub '${ProjectName}-${Environment}-xray'
+      Description: X-Ray tracing for Lambda
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: XRayAccess
+            Effect: Allow
+            Action:
+              - xray:PutTraceSegments
+              - xray:PutTelemetryRecords
+            Resource: '*'
+
+  # ============================================================
+  # SSM Parameters for Configuration
+  # ============================================================
+  ProjectNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/${ProjectName}/${Environment}/project-name'
+      Type: String
+      Value: !Ref ProjectName
+      Description: Project name
+      Tags:
+        Project: !Ref ProjectName
+        Environment: !Ref Environment
+
+  RegionParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/${ProjectName}/${Environment}/region'
+      Type: String
+      Value: !Ref AWS::Region
+      Description: AWS Region
+      Tags:
+        Project: !Ref ProjectName
+        Environment: !Ref Environment
+
+  # ============================================================
+  # SNS Topic for Alerts (Optional)
+  # ============================================================
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Environment}-alerts'
+      DisplayName: Bedrock Governance Alerts
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  AlertsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref AlertsTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudWatchAlarms
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action:
+              - SNS:Publish
+            Resource: !Ref AlertsTopic
+          - Sid: AllowLambdaErrors
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - SNS:Publish
+            Resource: !Ref AlertsTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  # ============================================================
+  # CloudWatch Alarms for Cost Monitoring
+  # ============================================================
+  BedrockCostAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-bedrock-high-cost'
+      AlarmDescription: Alert when Bedrock costs exceed threshold
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlertsTopic
+      MetricName: EstimatedCharges
+      Namespace: AWS/Billing
+      Statistic: Maximum
+      Period: 21600  # 6 hours
+      EvaluationPeriods: 1
+      Threshold: 100  # $100
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value: AmazonBedrock
+
+Outputs:
+  # Log Groups
+  Demo1LogGroupName:
+    Description: CloudWatch Log Group for Demo #1
+    Value: !Ref Demo1LogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-Demo1LogGroup'
+
+  Demo1LogGroupArn:
+    Description: ARN of Demo #1 Log Group
+    Value: !GetAtt Demo1LogGroup.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-Demo1LogGroupArn'
+
+  Demo2LogGroupName:
+    Description: CloudWatch Log Group for Demo #2
+    Value: !Ref Demo2LogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-Demo2LogGroup'
+
+  Demo2LogGroupArn:
+    Description: ARN of Demo #2 Log Group
+    Value: !GetAtt Demo2LogGroup.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-Demo2LogGroupArn'
+
+  ApiGatewayLogGroupName:
+    Description: CloudWatch Log Group for API Gateway
+    Value: !Ref ApiGatewayLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiGatewayLogGroup'
+
+  # IAM Policies
+  BedrockInvokePolicyArn:
+    Description: Managed policy ARN for Bedrock model invocation
+    Value: !Ref BedrockInvokePolicy
+    Export:
+      Name: !Sub '${AWS::StackName}-BedrockInvokePolicy'
+
+  BedrockGuardrailPolicyArn:
+    Description: Managed policy ARN for Bedrock Guardrails
+    Value: !Ref BedrockGuardrailPolicy
+    Export:
+      Name: !Sub '${AWS::StackName}-BedrockGuardrailPolicy'
+
+  LambdaCloudWatchLogsPolicyArn:
+    Description: Managed policy ARN for Lambda CloudWatch Logs
+    Value: !Ref LambdaCloudWatchLogsPolicy
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaLogsPolicy'
+
+  XRayTracingPolicyArn:
+    Condition: EnableXRay
+    Description: Managed policy ARN for X-Ray tracing
+    Value: !Ref XRayTracingPolicy
+    Export:
+      Name: !Sub '${AWS::StackName}-XRayPolicy'
+
+  # SNS
+  AlertsTopicArn:
+    Description: SNS topic for alerts
+    Value: !Ref AlertsTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-AlertsTopic'
+
+  # SSM Parameters
+  ProjectNameParameterName:
+    Description: SSM parameter name for project name
+    Value: !Ref ProjectNameParameter
+
+  RegionParameterName:
+    Description: SSM parameter name for region
+    Value: !Ref RegionParameter

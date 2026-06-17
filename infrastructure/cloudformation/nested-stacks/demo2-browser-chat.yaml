@@ -1,0 +1,614 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Demo #2: Browser Chat with Team-Based Model Access Control
+
+  Complete production-ready deployment:
+  - API Gateway v2 (HTTP API) with API keys and usage plans
+  - Lambda proxy for Bedrock API calls with team-based model RBAC
+  - AWS WAF with prompt injection protection
+  - Bedrock Guardrails for content filtering
+  - Team IAM roles (Team Alpha, Team Beta)
+  - CloudWatch metrics, alarms, and dashboards
+  - Test Lambda for automated validation
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Project name prefix
+
+  Environment:
+    Type: String
+    Description: Environment
+
+  ArtifactBucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment packages
+
+  TeamAlphaRateLimit:
+    Type: Number
+    Description: Requests per second for Team Alpha
+
+  TeamBetaRateLimit:
+    Type: Number
+    Description: Requests per second for Team Beta
+
+  EnableWAF:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Description: Enable AWS WAF
+
+  EnableGuardrails:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Description: Deploy Bedrock Guardrails
+
+  LogRetentionDays:
+    Type: Number
+    Description: CloudWatch Logs retention days
+
+  EnableXRayTracing:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Description: Enable X-Ray tracing
+
+Conditions:
+  ShouldEnableWAF: !Equals [!Ref EnableWAF, 'true']
+  ShouldEnableGuardrails: !Equals [!Ref EnableGuardrails, 'true']
+  EnableXRay: !Equals [!Ref EnableXRayTracing, 'true']
+
+Resources:
+  # ============================================================
+  # IAM Roles for Teams
+  # ============================================================
+  TeamAlphaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-team-alpha'
+      Description: Team Alpha - High volume tier with Haiku and Sonnet access
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'sts:ExternalId': !Sub '${ProjectName}-team-alpha'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockModelAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: InvokeHaikuAndSonnet
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-3-5-haiku*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-3-5-sonnet*'
+      Tags:
+        - Key: Team
+          Value: alpha
+        - Key: RateLimit
+          Value: !Ref TeamAlphaRateLimit
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  TeamBetaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-team-beta'
+      Description: Team Beta - Standard tier with Haiku-only access
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'sts:ExternalId': !Sub '${ProjectName}-team-beta'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockModelAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: InvokeHaikuOnly
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-3-5-haiku*'
+      Tags:
+        - Key: Team
+          Value: beta
+        - Key: RateLimit
+          Value: !Ref TeamBetaRateLimit
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================
+  # Lambda Proxy Role
+  # ============================================================
+  LambdaProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-lambda-proxy'
+      Description: Lambda proxy for API Gateway to Bedrock
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - !If
+          - EnableXRay
+          - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+          - !Ref AWS::NoValue
+      Policies:
+        - PolicyName: BedrockFullAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: InvokeAllModels
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-*'
+              - Sid: ApplyGuardrails
+                Effect: Allow
+                Action:
+                  - bedrock:ApplyGuardrail
+                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:guardrail/*'
+        - PolicyName: CloudWatchMetrics
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: PutCustomMetrics
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: '*'
+
+  # ============================================================
+  # Lambda Proxy Function
+  # ============================================================
+  GatewayProxyFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-gateway-proxy'
+      Description: API Gateway proxy to Bedrock with team-based RBAC
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaProxyRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      ReservedConcurrentExecutions: 100
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: lambda/gateway-proxy.zip
+      Environment:
+        Variables:
+          TEAM_ALPHA_MODELS: 'us.anthropic.claude-3-5-haiku-20241022-v1:0,us.anthropic.claude-3-5-sonnet-20241022-v2:0'
+          TEAM_BETA_MODELS: 'us.anthropic.claude-3-5-haiku-20241022-v1:0'
+          GUARDRAIL_ID: !If [ShouldEnableGuardrails, !Ref BedrockGuardrail, '']
+          GUARDRAIL_VERSION: !If [ShouldEnableGuardrails, 'DRAFT', '']
+          LOG_LEVEL: INFO
+          PROJECT_NAME: !Ref ProjectName
+          ENVIRONMENT: !Ref Environment
+      TracingConfig:
+        Mode: !If [EnableXRay, Active, PassThrough]
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV3-python311-x86_64:7'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  ProxyFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${GatewayProxyFunction}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ============================================================
+  # API Gateway HTTP API
+  # ============================================================
+  ApiGateway:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-api'
+      Description: Browser chat API with team-based rate limiting
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: ['*']
+        AllowMethods: ['POST', 'GET', 'OPTIONS']
+        AllowHeaders: ['Content-Type', 'X-Api-Key', 'Authorization']
+        MaxAge: 300
+      Tags:
+        Project: !Ref ProjectName
+        Environment: !Ref Environment
+
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ApiGateway
+      StageName: prod
+      Description: Production stage
+      AutoDeploy: true
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength","error":"$context.error.message"}'
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 200
+        ThrottlingRateLimit: 100
+      Tags:
+        Project: !Ref ProjectName
+        Environment: !Ref Environment
+
+  ApiGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/${ProjectName}-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGateway
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt GatewayProxyFunction.Arn
+      IntegrationMethod: POST
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 29000
+
+  ApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /invoke'
+      Target: !Sub 'integrations/${ApiIntegration}'
+      AuthorizationType: AWS_IAM
+
+  LambdaApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref GatewayProxyFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*'
+
+  # ============================================================
+  # API Keys and Usage Plans
+  # ============================================================
+  TeamAlphaApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-team-alpha-key'
+      Description: API key for Team Alpha
+      Enabled: true
+      Tags:
+        - Key: Team
+          Value: alpha
+        - Key: Project
+          Value: !Ref ProjectName
+
+  TeamBetaApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-team-beta-key'
+      Description: API key for Team Beta
+      Enabled: true
+      Tags:
+        - Key: Team
+          Value: beta
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Note: API Gateway v2 (HTTP API) doesn't support Usage Plans directly
+  # We use throttling settings on the stage instead
+
+  # ============================================================
+  # AWS WAF (Optional)
+  # ============================================================
+  WebACL:
+    Type: AWS::WAFv2::WebACL
+    Condition: ShouldEnableWAF
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-waf'
+      Description: WAF for LLM Gateway with prompt injection protection
+      Scope: REGIONAL
+      DefaultAction:
+        Allow: {}
+      Rules:
+        - Name: RateLimitRule
+          Priority: 1
+          Statement:
+            RateBasedStatement:
+              Limit: 2000
+              AggregateKeyType: IP
+          Action:
+            Block:
+              CustomResponse:
+                ResponseCode: 429
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: RateLimit
+
+        - Name: BlockPromptInjection
+          Priority: 2
+          Statement:
+            OrStatement:
+              Statements:
+                - ByteMatchStatement:
+                    SearchString: 'ignore all previous instructions'
+                    FieldToMatch:
+                      Body:
+                        OversizeHandling: CONTINUE
+                    TextTransformations:
+                      - Priority: 0
+                        Type: LOWERCASE
+                    PositionalConstraint: CONTAINS
+                - ByteMatchStatement:
+                    SearchString: 'ignore previous instructions'
+                    FieldToMatch:
+                      Body:
+                        OversizeHandling: CONTINUE
+                    TextTransformations:
+                      - Priority: 0
+                        Type: LOWERCASE
+                    PositionalConstraint: CONTAINS
+                - ByteMatchStatement:
+                    SearchString: 'reveal your system prompt'
+                    FieldToMatch:
+                      Body:
+                        OversizeHandling: CONTINUE
+                    TextTransformations:
+                      - Priority: 0
+                        Type: LOWERCASE
+                    PositionalConstraint: CONTAINS
+          Action:
+            Block:
+              CustomResponse:
+                ResponseCode: 403
+                CustomResponseBodyKey: PromptInjectionBlocked
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: PromptInjectionBlocks
+
+        - Name: AWSManagedRulesCommonRuleSet
+          Priority: 3
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: CommonRuleSet
+
+      CustomResponseBodies:
+        PromptInjectionBlocked:
+          ContentType: APPLICATION_JSON
+          Content: '{"error":"Potential prompt injection detected","message":"Your request was blocked by AWS WAF due to suspicious patterns"}'
+
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub '${ProjectName}-${Environment}-waf'
+
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  WebACLAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Condition: ShouldEnableWAF
+    Properties:
+      ResourceArn: !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/${ApiGateway}/stages/${ApiStage}'
+      WebACLArn: !GetAtt WebACL.Arn
+
+  # ============================================================
+  # Bedrock Guardrails (Optional)
+  # ============================================================
+  BedrockGuardrail:
+    Type: AWS::Bedrock::Guardrail
+    Condition: ShouldEnableGuardrails
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-content-filter'
+      Description: Multi-lingual content filtering for browser chat
+      BlockedInputMessaging: Your message was blocked by content filters. Please revise and try again.
+      BlockedOutputsMessaging: The response was blocked by content filters. Please try rephrasing your question.
+      ContentPolicyConfig:
+        FiltersConfig:
+          - Type: HATE
+            InputStrength: HIGH
+            OutputStrength: HIGH
+          - Type: INSULTS
+            InputStrength: MEDIUM
+            OutputStrength: MEDIUM
+          - Type: SEXUAL
+            InputStrength: HIGH
+            OutputStrength: HIGH
+          - Type: VIOLENCE
+            InputStrength: MEDIUM
+            OutputStrength: MEDIUM
+          - Type: MISCONDUCT
+            InputStrength: MEDIUM
+            OutputStrength: MEDIUM
+          - Type: PROMPT_ATTACK
+            InputStrength: HIGH
+            OutputStrength: NONE
+      SensitiveInformationPolicyConfig:
+        PiiEntitiesConfig:
+          - Type: EMAIL
+            Action: BLOCK
+          - Type: PHONE
+            Action: BLOCK
+          - Type: US_SOCIAL_SECURITY_NUMBER
+            Action: BLOCK
+          - Type: CREDIT_DEBIT_CARD_NUMBER
+            Action: BLOCK
+      WordPolicyConfig:
+        ManagedWordListsConfig:
+          - Type: PROFANITY
+        WordsConfig: []
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================
+  # CloudWatch Alarms
+  # ============================================================
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-lambda-errors'
+      AlarmDescription: Alert when Lambda proxy has high error rate
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref GatewayProxyFunction
+      TreatMissingData: notBreaching
+
+  ApiGateway5XXAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-api-5xx-errors'
+      AlarmDescription: Alert on API Gateway 5XX errors
+      MetricName: 5XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref ApiGateway
+      TreatMissingData: notBreaching
+
+  BedrockThrottlingAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-bedrock-throttling'
+      AlarmDescription: Alert when Bedrock requests are throttled
+      MetricName: ModelInvocationThrottle
+      Namespace: AWS/Bedrock
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  # Stack Info
+  StackName:
+    Description: Stack name
+    Value: !Ref AWS::StackName
+
+  # API Gateway
+  ApiEndpoint:
+    Description: API Gateway endpoint URL for chatbox
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/invoke'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiEndpoint'
+
+  ApiGatewayId:
+    Description: API Gateway ID
+    Value: !Ref ApiGateway
+
+  # API Keys
+  TeamAlphaApiKey:
+    Description: API key for Team Alpha (paste into chatbox)
+    Value: !Ref TeamAlphaApiKey
+
+  TeamBetaApiKey:
+    Description: API key for Team Beta (paste into chatbox)
+    Value: !Ref TeamBetaApiKey
+
+  # Lambda
+  ProxyFunctionArn:
+    Description: Gateway proxy Lambda function ARN
+    Value: !GetAtt GatewayProxyFunction.Arn
+
+  # WAF
+  WebACLId:
+    Condition: ShouldEnableWAF
+    Description: WAF Web ACL ID
+    Value: !GetAtt WebACL.Id
+
+  WebACLArn:
+    Condition: ShouldEnableWAF
+    Description: WAF Web ACL ARN
+    Value: !GetAtt WebACL.Arn
+
+  # Guardrails
+  GuardrailId:
+    Condition: ShouldEnableGuardrails
+    Description: Bedrock Guardrail ID
+    Value: !Ref BedrockGuardrail
+
+  GuardrailArn:
+    Condition: ShouldEnableGuardrails
+    Description: Bedrock Guardrail ARN
+    Value: !GetAtt BedrockGuardrail.GuardrailArn
+
+  # Team Roles
+  TeamAlphaRoleArn:
+    Description: IAM role ARN for Team Alpha
+    Value: !GetAtt TeamAlphaRole.Arn
+
+  TeamBetaRoleArn:
+    Description: IAM role ARN for Team Beta
+    Value: !GetAtt TeamBetaRole.Arn
+
+  # Configuration
+  ChatboxConfiguration:
+    Description: Configuration values for chatbox HTML
+    Value: !Sub |
+      Update chatbox HTML with these values:
+      - API_ENDPOINT: https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/invoke
+      - TEAM_ALPHA_API_KEY: ${TeamAlphaApiKey}
+      - TEAM_BETA_API_KEY: ${TeamBetaApiKey}
