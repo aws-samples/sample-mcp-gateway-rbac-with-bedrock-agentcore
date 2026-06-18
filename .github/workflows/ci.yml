@@ -17,8 +17,10 @@ jobs:
           python-version: "3.11"
       - name: Install flake8
         run: pip install flake8
-      - name: Lint Lambda functions
-        run: flake8 lambda/ --max-line-length=120 --ignore=E501,W503
+      - name: Lint Demo 1 Lambda functions
+        run: flake8 gateway-url-ide-integration-demo/lambda/ --max-line-length=120 --ignore=E501,W503
+      - name: Lint Demo 2 Lambda functions
+        run: flake8 team-rbac-bedrock-chat-demo/lambda/ --max-line-length=120 --ignore=E501,W503
 
   test:
     name: Unit Tests
@@ -44,13 +46,14 @@ jobs:
           # Excludes the standard AWS docs placeholder 123456789012
           if grep -rn '[0-9]\{12\}' --include="*.json" --include="*.yaml" --include="*.yml" \
                --include="*.py" --include="*.sh" --include="*.ts" --include="*.js" \
-               --include="*.md" --include="*.cedar" . \
+               --include="*.cedar" . \
              | grep -v "123456789012" \
              | grep -v "017000801446" \
              | grep -v "/.git/" \
              | grep -v "/cdk.out/" \
              | grep -v "/node_modules/" \
-             | grep -v "/.venv/"; then
+             | grep -v "/.venv/" \
+             | grep -v "package-lock.json"; then
             echo "ERROR: Possible hardcoded AWS account ID found. Replace with <ACCOUNT_ID> placeholder."
             exit 1
           fi

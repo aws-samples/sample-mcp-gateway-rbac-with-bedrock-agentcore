@@ -2,7 +2,7 @@
 Unit tests for MCP Server Lambda functions (Demo 1)
 
 Tests the MCP JSON-RPC protocol implementation and tool functionality
-for all three MCP servers (ecommerce, products, orders).
+for all four MCP servers (ecommerce, products, orders, jira).
 
 Run with: python -m pytest tests/test_mcp_servers.py -v
 """
@@ -10,13 +10,13 @@ Run with: python -m pytest tests/test_mcp_servers.py -v
 import json
 import sys
 import os
-import importlib
 
 # Add lambda directories to path (Demo 1 MCP servers)
 _BASE = os.path.join(os.path.dirname(__file__), '..', 'gateway-url-ide-integration-demo', 'lambda', 'mcp-servers')
 sys.path.insert(0, os.path.join(_BASE, 'ecommerce-mcp'))
 sys.path.insert(0, os.path.join(_BASE, 'products-mcp'))
 sys.path.insert(0, os.path.join(_BASE, 'orders-mcp'))
+sys.path.insert(0, os.path.join(_BASE, 'jira-mcp'))
 
 
 def _reload_handler():
@@ -31,7 +31,6 @@ class TestEcommerceMCP:
     """Test Ecommerce MCP Server"""
 
     def setup_method(self):
-        # Ensure ecommerce-mcp is first in path
         ecommerce_path = os.path.join(_BASE, 'ecommerce-mcp')
         if ecommerce_path in sys.path:
             sys.path.remove(ecommerce_path)
@@ -46,7 +45,7 @@ class TestEcommerceMCP:
         assert result['jsonrpc'] == '2.0'
         assert 'result' in result
         assert 'tools' in result['result']
-        assert len(result['result']['tools']) == 2  # list_customers, get_customer_by_id
+        assert len(result['result']['tools']) == 2
 
     def test_list_customers(self):
         """Test list_customers tool"""
@@ -114,7 +113,7 @@ class TestProductsMCP:
         result = self.handler(event, None)
 
         assert result['jsonrpc'] == '2.0'
-        assert len(result['result']['tools']) == 3  # list, search, get_by_id
+        assert len(result['result']['tools']) == 3
 
     def test_list_products(self):
         """Test list_products tool"""
@@ -147,6 +146,36 @@ class TestProductsMCP:
         assert content['total'] >= 1
         assert 'mouse' in content['products'][0]['name'].lower()
 
+    def test_get_product_by_id(self):
+        """Test get_product_by_id tool"""
+        event = {
+            'method': 'tools/call',
+            'params': {
+                'name': 'demo-products-mcp___get_product_by_id',
+                'arguments': {'product_id': 'PROD-001'}
+            }
+        }
+        result = self.handler(event, None)
+
+        assert 'result' in result
+        content = json.loads(result['result']['content'][0]['text'])
+        assert content['id'] == 'PROD-001'
+        assert content['name'] == 'Wireless Mouse'
+
+    def test_filter_by_category(self):
+        """Test list_products with category filter"""
+        event = {
+            'method': 'tools/call',
+            'params': {
+                'name': 'demo-products-mcp___list_products',
+                'arguments': {'category': 'electronics'}
+            }
+        }
+        result = self.handler(event, None)
+
+        content = json.loads(result['result']['content'][0]['text'])
+        assert all(p['category'] == 'electronics' for p in content['products'])
+
 
 class TestOrdersMCP:
     """Test Orders MCP Server"""
@@ -164,7 +193,7 @@ class TestOrdersMCP:
         result = self.handler(event, None)
 
         assert result['jsonrpc'] == '2.0'
-        assert len(result['result']['tools']) == 3  # list, get_by_id, create
+        assert len(result['result']['tools']) == 3
 
     def test_list_orders(self):
         """Test list_orders tool"""
@@ -201,3 +230,95 @@ class TestOrdersMCP:
         content = json.loads(result['result']['content'][0]['text'])
         assert content['order']['customer_id'] == 'CUST-001'
         assert content['order']['status'] == 'pending'
+
+    def test_get_order_by_id(self):
+        """Test get_order_by_id tool"""
+        event = {
+            'method': 'tools/call',
+            'params': {
+                'name': 'demo-orders-mcp___get_order_by_id',
+                'arguments': {'order_id': 'ORD-001'}
+            }
+        }
+        result = self.handler(event, None)
+
+        assert 'result' in result
+        content = json.loads(result['result']['content'][0]['text'])
+        assert content['id'] == 'ORD-001'
+        assert content['status'] == 'shipped'
+
+
+class TestJiraMCP:
+    """Test Jira MCP Server"""
+
+    def setup_method(self):
+        jira_path = os.path.join(_BASE, 'jira-mcp')
+        if jira_path in sys.path:
+            sys.path.remove(jira_path)
+        sys.path.insert(0, jira_path)
+        self.handler = _reload_handler()
+
+    def test_tools_list(self):
+        """Test that tools/list returns available tools"""
+        event = {'method': 'tools/list'}
+        result = self.handler(event, None)
+
+        assert result['jsonrpc'] == '2.0'
+        assert 'result' in result
+        assert len(result['result']['tools']) == 1
+        assert result['result']['tools'][0]['name'] == 'demo-jira-mcp___list_jira_tickets'
+
+    def test_list_jira_tickets(self):
+        """Test list_jira_tickets tool"""
+        event = {
+            'method': 'tools/call',
+            'params': {
+                'name': 'demo-jira-mcp___list_jira_tickets',
+                'arguments': {}
+            }
+        }
+        result = self.handler(event, None)
+
+        assert result['jsonrpc'] == '2.0'
+        assert 'result' in result
+        content = json.loads(result['result']['content'][0]['text'])
+        assert 'tickets' in content
+        assert len(content['tickets']) == 3
+
+    def test_filter_by_status(self):
+        """Test filtering tickets by status"""
+        event = {
+            'method': 'tools/call',
+            'params': {
+                'name': 'demo-jira-mcp___list_jira_tickets',
+                'arguments': {'status': 'Open'}
+            }
+        }
+        result = self.handler(event, None)
+
+        content = json.loads(result['result']['content'][0]['text'])
+        assert content['total'] == 1
+        assert content['tickets'][0]['status'] == 'Open'
+
+    def test_filter_by_priority(self):
+        """Test filtering tickets by priority"""
+        event = {
+            'method': 'tools/call',
+            'params': {
+                'name': 'demo-jira-mcp___list_jira_tickets',
+                'arguments': {'priority': 'High'}
+            }
+        }
+        result = self.handler(event, None)
+
+        content = json.loads(result['result']['content'][0]['text'])
+        assert content['total'] == 1
+        assert content['tickets'][0]['priority'] == 'High'
+
+    def test_unknown_method(self):
+        """Test error handling for unknown method"""
+        event = {'method': 'unknown/method'}
+        result = self.handler(event, None)
+
+        assert 'error' in result
+        assert result['error']['code'] == -32601

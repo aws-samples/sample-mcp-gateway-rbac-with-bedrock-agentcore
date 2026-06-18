@@ -11,7 +11,7 @@ Tools:
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Sample order data
 SAMPLE_ORDERS = [
@@ -221,7 +221,7 @@ def _create_order(request_id, args):
             "customer_id": customer_id,
             "status": "pending",
             "items": items,
-            "created": datetime.utcnow().isoformat() + "Z"
+            "created": datetime.now(timezone.utc).isoformat()
         },
         "message": "Order created successfully"
     }

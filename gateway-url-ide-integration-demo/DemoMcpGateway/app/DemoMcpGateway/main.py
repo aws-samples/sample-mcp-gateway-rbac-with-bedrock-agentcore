@@ -8,32 +8,30 @@ from mcp_client.client import get_streamable_http_mcp_client
 app = BedrockAgentCoreApp()
 log = app.logger
 
-# Define a Streamable HTTP MCP Client
-mcp_clients = [get_streamable_http_mcp_client()]
-
 DEFAULT_SYSTEM_PROMPT = """
 You are a helpful assistant. Use tools when appropriate.
 """
 
-
 # Define a collection of tools used by the model
 tools = []
+
 
 # Define a simple function tool
 @tool
 def add_numbers(a: int, b: int) -> int:
     """Return the sum of two numbers"""
-    return a+b
+    return a + b
+
+
 tools.append(add_numbers)
 
-
-# Add MCP client to tools if available
-for mcp_client in mcp_clients:
-    if mcp_client:
-        tools.append(mcp_client)
-
+# Add MCP client to tools if configured
+mcp_client = get_streamable_http_mcp_client()
+if mcp_client:
+    tools.append(mcp_client)
 
 _agent = None
+
 
 def get_or_create_agent():
     global _agent

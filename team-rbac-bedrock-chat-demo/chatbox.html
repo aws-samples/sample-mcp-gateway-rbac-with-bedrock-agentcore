@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LLM Gateway Demo - Team RBAC & Guardrails</title>
-    <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1544.0.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -612,7 +611,9 @@
 
     <script>
         // ⚠️ CONFIGURATION REQUIRED
-        // Replace these placeholders with your deployed infrastructure values
+        // After deploying the CloudFormation stack, replace these placeholders:
+        // 1. Get API endpoint from stack outputs: ApiEndpoint
+        // 2. Get API key values: aws apigateway get-api-key --api-key <KEY_ID> --include-value --query value --output text
         const API_ENDPOINT = "https://YOUR_API_GATEWAY_ID.execute-api.us-east-1.amazonaws.com/prod/invoke";
 
         const TEAMS = {

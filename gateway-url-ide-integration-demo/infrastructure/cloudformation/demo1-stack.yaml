@@ -1,0 +1,350 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Demo 1: AgentCore MCP Gateway - Lambda MCP Servers + IAM Roles
+
+  Deploys:
+  - 4 Lambda MCP servers (customers, products, orders, jira)
+  - Lambda execution role
+  - Gateway execution role (for AgentCore to invoke Lambdas)
+  - 2 test IAM users (ReadOnly + FullAccess) with group tags
+  - MCP Registry Lambda + API Gateway (GitHub Copilot catalog endpoint)
+
+  After deployment:
+  1. Note the Lambda ARNs from Outputs
+  2. Update agentcore.json with your REGION and ACCOUNT_ID
+  3. Run: cd DemoMcpGateway/agentcore && agentcore deploy
+  4. The gateway URL is your MCP endpoint
+
+Parameters:
+  StackPrefix:
+    Type: String
+    Default: mcp-demo
+    Description: Prefix for all resource names
+    AllowedPattern: ^[a-z][a-z0-9-]*$
+
+Resources:
+  # ============================================================
+  # Lambda Execution Role
+  # ============================================================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${StackPrefix}-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # ============================================================
+  # Gateway Execution Role (AgentCore uses this to invoke Lambdas)
+  # ============================================================
+  GatewayExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${StackPrefix}-gateway-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeMCPLambdas
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt EcommerceMcpFunction.Arn
+                  - !GetAtt ProductsMcpFunction.Arn
+                  - !GetAtt OrdersMcpFunction.Arn
+                  - !GetAtt JiraMcpFunction.Arn
+
+  # ============================================================
+  # Lambda MCP Servers
+  # ============================================================
+  EcommerceMcpFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${StackPrefix}-ecommerce-mcp'
+      Description: 'MCP Server: Customer management tools (list, get)'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        ZipFile: |
+          # Placeholder - deploy actual code with deploy-lambdas.sh
+          def lambda_handler(event, context):
+              return {"error": "Deploy Lambda code first. Run: ./deploy-lambdas.sh"}
+
+  ProductsMcpFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${StackPrefix}-products-mcp'
+      Description: 'MCP Server: Product catalog tools (list, search, get)'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {"error": "Deploy Lambda code first. Run: ./deploy-lambdas.sh"}
+
+  OrdersMcpFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${StackPrefix}-orders-mcp'
+      Description: 'MCP Server: Order management tools (list, get, create)'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {"error": "Deploy Lambda code first. Run: ./deploy-lambdas.sh"}
+
+  JiraMcpFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${StackPrefix}-jira-mcp'
+      Description: 'MCP Server: Jira ticket tools (list, filter)'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {"error": "Deploy Lambda code first. Run: ./deploy-lambdas.sh"}
+
+  # ============================================================
+  # Test IAM Users (for Cedar RBAC demo)
+  # ============================================================
+  ReadOnlyUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub '${StackPrefix}-readonly'
+      Tags:
+        - Key: group
+          Value: ReadOnly
+      Policies:
+        - PolicyName: GatewayAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: bedrock-agentcore:InvokeGateway
+                Resource: '*'
+
+  FullAccessUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub '${StackPrefix}-fullaccess'
+      Tags:
+        - Key: group
+          Value: FullAccess
+      Policies:
+        - PolicyName: GatewayAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: bedrock-agentcore:InvokeGateway
+                Resource: '*'
+
+  # ============================================================
+  # MCP Registry (GitHub Copilot catalog endpoint)
+  # ============================================================
+  RegistryLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${StackPrefix}-registry-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  RegistryLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${StackPrefix}-registry'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt RegistryLambdaRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          GATEWAY_URL: 'PLACEHOLDER'
+      Code:
+        ZipFile: |
+          import json, os, urllib.parse
+
+          def handler(event, context):
+              gateway_url = os.environ.get('GATEWAY_URL', 'https://YOUR-GATEWAY/mcp')
+              SERVERS = [
+                  _server("com.example/products-mcp", "Products MCP",
+                          "Product catalog: list, search, get products.", "1.0.0",
+                          ["list_products","search_products","get_product_by_id"],
+                          "RECOMMENDED", "Engineering"),
+                  _server("com.example/orders-mcp", "Orders MCP",
+                          "Order management: list, get, create orders.", "1.0.0",
+                          ["list_orders","get_order_by_id","create_order"],
+                          "SUPPORTED", "Commerce"),
+                  _server("com.example/customers-mcp", "Customers MCP",
+                          "Customer data: list and lookup customers.", "1.0.0",
+                          ["list_customers","get_customer_by_id"],
+                          "RECOMMENDED", "Support"),
+                  _server("com.example/jira-mcp", "Jira MCP",
+                          "Jira ticket lookup and filtering.", "1.0.0",
+                          ["list_jira_tickets"],
+                          "SUPPORTED", "DevOps"),
+              ]
+              path = event.get('path','') or event.get('rawPath','')
+              method = event.get('httpMethod','') or event.get('requestContext',{}).get('http',{}).get('method','')
+              headers = {'Content-Type':'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type'}
+              if method == 'OPTIONS':
+                  return {'statusCode':204,'headers':headers,'body':''}
+              if '/v0.1/servers' in path and '/versions' not in path:
+                  params = event.get('queryStringParameters') or {}
+                  phase = params.get('phase')
+                  filtered = SERVERS if not phase else [s for s in SERVERS if s['_meta'].get('registrationPhase','').upper()==phase.upper()]
+                  return {'statusCode':200,'headers':headers,'body':json.dumps({"servers":filtered,"metadata":{"count":len(filtered)}})}
+              if '/versions/' in path:
+                  parts = path.split('/v0.1/servers/')
+                  if len(parts)>1:
+                      name = urllib.parse.unquote(parts[1].split('/versions')[0])
+                      match = next((s for s in SERVERS if s['server']['name']==name),None)
+                      if match:
+                          return {'statusCode':200,'headers':headers,'body':json.dumps(match)}
+                  return {'statusCode':404,'headers':headers,'body':json.dumps({"error":"Not found"})}
+              return {'statusCode':404,'headers':headers,'body':json.dumps({"error":"Not found"})}
+
+          def _server(name, title, desc, ver, caps, phase, team):
+              gateway_url = os.environ.get('GATEWAY_URL','')
+              return {"server":{"$schema":"https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json","name":name,"title":title,"description":desc,"version":ver,"remotes":[{"type":"streamable-http","url":f"{gateway_url}/mcp"}]},"_meta":{"provider":"AWS Bedrock AgentCore","deployment":"remote","rbac":"Cedar policies at gateway","registrationPhase":phase,"card":{"owningTeam":team,"capabilities":caps}}}
+
+  RegistryLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RegistryLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RegistryApi}/*'
+
+  RegistryApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${StackPrefix}-registry-api'
+      Description: MCP Registry v0.1 - GitHub Copilot catalog endpoint
+
+  RegistryApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RegistryApi
+      ParentId: !GetAtt RegistryApi.RootResourceId
+      PathPart: '{proxy+}'
+
+  RegistryApiMethodAny:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RegistryApi
+      ResourceId: !Ref RegistryApiResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegistryLambda.Arn}/invocations'
+
+  RegistryApiMethodRoot:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RegistryApi
+      ResourceId: !GetAtt RegistryApi.RootResourceId
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegistryLambda.Arn}/invocations'
+
+  RegistryApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - RegistryApiMethodAny
+      - RegistryApiMethodRoot
+    Properties:
+      RestApiId: !Ref RegistryApi
+
+  RegistryApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref RegistryApi
+      DeploymentId: !Ref RegistryApiDeployment
+      StageName: prod
+
+Outputs:
+  # Lambda ARNs (for agentcore.json)
+  EcommerceMcpArn:
+    Description: Customers MCP Lambda ARN
+    Value: !GetAtt EcommerceMcpFunction.Arn
+
+  ProductsMcpArn:
+    Description: Products MCP Lambda ARN
+    Value: !GetAtt ProductsMcpFunction.Arn
+
+  OrdersMcpArn:
+    Description: Orders MCP Lambda ARN
+    Value: !GetAtt OrdersMcpFunction.Arn
+
+  JiraMcpArn:
+    Description: Jira MCP Lambda ARN
+    Value: !GetAtt JiraMcpFunction.Arn
+
+  # Gateway Role (for agentcore deploy)
+  GatewayRoleArn:
+    Description: IAM role ARN for AgentCore Gateway (use in agentcore deploy)
+    Value: !GetAtt GatewayExecutionRole.Arn
+
+  # Test Users
+  ReadOnlyUserName:
+    Description: 'ReadOnly test user (tag: group=ReadOnly). Create access key with: aws iam create-access-key --user-name mcp-demo-readonly'
+    Value: !Ref ReadOnlyUser
+
+  FullAccessUserName:
+    Description: 'FullAccess test user (tag: group=FullAccess). Create access key with: aws iam create-access-key --user-name mcp-demo-fullaccess'
+    Value: !Ref FullAccessUser
+
+  # Registry
+  RegistryUrl:
+    Description: MCP Registry URL (paste into GitHub Copilot admin settings)
+    Value: !Sub 'https://${RegistryApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+
+  # Next Steps
+  NextSteps:
+    Description: Deployment next steps
+    Value: !Sub |
+      1. Deploy Lambda code: cd lambda/mcp-servers && ./deploy-lambdas.sh
+      2. Update agentcore.json: replace <REGION> with ${AWS::Region}, <ACCOUNT_ID> with ${AWS::AccountId}
+      3. Deploy gateway: cd DemoMcpGateway/agentcore && agentcore deploy
+      4. Update registry with gateway URL: aws lambda update-function-configuration --function-name ${StackPrefix}-registry --environment Variables={GATEWAY_URL=<YOUR_GATEWAY_URL>}
+      5. Create access keys for test users: aws iam create-access-key --user-name ${StackPrefix}-readonly

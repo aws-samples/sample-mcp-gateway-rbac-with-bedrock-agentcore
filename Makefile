@@ -5,7 +5,7 @@
 # Usage:
 #   make check          - Verify prerequisites
 #   make test           - Run unit tests
-#   make deploy-demo1   - Deploy Demo 1 (AgentCore Gateway + VS Code)
+#   make deploy-demo1   - Deploy Demo 1 (AgentCore Gateway + Cedar RBAC)
 #   make deploy-demo2   - Deploy Demo 2 (Team RBAC + Browser Chat)
 #   make clean          - Remove build artifacts
 #   make help           - Show this help
@@ -60,38 +60,15 @@ lint: ## Lint Python code
 	@echo -e "$(GREEN)Lint passed!$(NC)"
 
 # ─────────────────────────────────────────────
-# Demo 1: AgentCore Gateway + VS Code
+# Demo 1: AgentCore Gateway + Cedar RBAC
 # ─────────────────────────────────────────────
 
 deploy-demo1: check-demo1 ## Deploy Demo 1 (AgentCore Gateway)
 	@echo "╔════════════════════════════════════════════════════════════════╗"
-	@echo "║     Deploying Demo 1: AgentCore Gateway + VS Code            ║"
+	@echo "║     Deploying Demo 1: AgentCore Gateway + Cedar RBAC         ║"
 	@echo "╚════════════════════════════════════════════════════════════════╝"
 	@echo ""
-	@# Step 1: Get account info
-	$(eval ACCOUNT_ID := $(shell aws sts get-caller-identity --query Account --output text))
-	@echo "Account: $(ACCOUNT_ID)"
-	@echo "Region:  $(REGION)"
-	@echo ""
-	@# Step 2: Deploy Lambda MCP servers
-	@echo "Step 1/3: Deploying Lambda MCP servers..."
-	@cd gateway-url-ide-integration-demo/lambda/mcp-servers && \
-		AWS_REGION=$(REGION) ./deploy-all.sh
-	@echo ""
-	@# Step 3: Configure agentcore.json with actual values
-	@echo "Step 2/3: Configuring AgentCore project..."
-	@cd gateway-url-ide-integration-demo/DemoMcpGateway/agentcore && \
-		sed "s/<REGION>/$(REGION)/g; s/<ACCOUNT_ID>/$(ACCOUNT_ID)/g" agentcore.json > agentcore.json.tmp && \
-		mv agentcore.json.tmp agentcore.json && \
-		echo '[ {"name": "default", "account": "$(ACCOUNT_ID)", "region": "$(REGION)"} ]' > aws-targets.json
-	@echo ""
-	@# Step 4: Deploy gateway
-	@echo "Step 3/3: Deploying AgentCore Gateway..."
-	@cd gateway-url-ide-integration-demo/DemoMcpGateway/agentcore && \
-		cd cdk && npm install --silent && cd .. && \
-		agentcore deploy
-	@echo ""
-	@echo -e "$(GREEN)Demo 1 deployed! Follow VSCODE_SETUP.md to configure your IDE.$(NC)"
+	@cd gateway-url-ide-integration-demo && bash ./deploy.sh $(REGION)
 
 # ─────────────────────────────────────────────
 # Demo 2: Team RBAC + Browser Chat
@@ -133,21 +110,39 @@ endif
 		--no-fail-on-empty-changeset
 	@echo ""
 	@# Get outputs
-	@echo "Step 3/3: Retrieving API endpoint..."
+	@echo "Step 3/3: Retrieving stack outputs..."
 	$(eval API_ENDPOINT := $(shell aws cloudformation describe-stacks \
 		--stack-name $(STACK_NAME) \
 		--region $(REGION) \
 		--query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
 		--output text))
+	$(eval TEAM_ALPHA_KEY := $(shell aws cloudformation describe-stacks \
+		--stack-name $(STACK_NAME) \
+		--region $(REGION) \
+		--query 'Stacks[0].Outputs[?OutputKey==`TeamAlphaApiKeyId`].OutputValue' \
+		--output text))
+	$(eval TEAM_BETA_KEY := $(shell aws cloudformation describe-stacks \
+		--stack-name $(STACK_NAME) \
+		--region $(REGION) \
+		--query 'Stacks[0].Outputs[?OutputKey==`TeamBetaApiKeyId`].OutputValue' \
+		--output text))
 	@echo ""
 	@echo -e "$(GREEN)Demo 2 deployed!$(NC)"
 	@echo ""
 	@echo "API Endpoint: $(API_ENDPOINT)"
+	@echo "Team Alpha API Key ID: $(TEAM_ALPHA_KEY)"
+	@echo "Team Beta API Key ID: $(TEAM_BETA_KEY)"
+	@echo ""
+	@echo "To get the actual API key values:"
+	@echo "  aws apigateway get-api-key --api-key <KEY_ID> --include-value --query value --output text"
 	@echo ""
 	@echo "Next steps:"
-	@echo "  1. Update team-rbac-bedrock-chat-demo/chatbox.html with the API endpoint above"
+	@echo "  1. Update team-rbac-bedrock-chat-demo/chatbox.html with the API endpoint and keys"
 	@echo "  2. Open chatbox.html in your browser"
 	@echo "  3. Select a team and start chatting"
+	@echo ""
+	@echo "View CloudWatch logs:"
+	@echo "  aws logs tail /aws/lambda/$(STACK_NAME)-proxy --follow --region $(REGION)"
 
 # ─────────────────────────────────────────────
 # Cleanup
@@ -158,6 +153,7 @@ clean: ## Remove build artifacts
 	@rm -rf build/ tmp/
 	@rm -f gateway-url-ide-integration-demo/lambda/mcp-servers/*/function.zip
 	@rm -f team-rbac-bedrock-chat-demo/lambda/*/function.zip
+	@rm -f gateway-url-ide-integration-demo/DemoMcpGateway/agentcore/aws-targets.json
 	@echo -e "$(GREEN)Clean!$(NC)"
 
 destroy-demo2: ## Delete Demo 2 CloudFormation stack

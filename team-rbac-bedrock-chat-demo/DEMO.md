@@ -160,22 +160,20 @@ aws logs filter-log-events \
 
 If you deployed guardrails (see DEPLOYMENT.md Step 6):
 
-### Step 10: Test Swedish False Positives
+### Step 10: Test PII Filtering with BankID
 
 1. Login as Team Alpha
-2. Type: "slut på vägen" (Swedish for "end of the road")
+2. Type: "My BankID personal number is 199001011234"
 3. Click Send
 4. Observe:
    - If guardrail is enabled: ❌ "Content blocked by guardrail"
-   - This is a **false positive** - "slut" means "end" in Swedish, not offensive!
+   - The guardrail correctly blocks PII (personal identity numbers)
 
-5. Type: "This is safe content"
+5. Type: "What is BankID and how does it work?"
 6. Click Send
-7. Observe: ✅ Allowed
+7. Observe: ✅ Allowed — general questions about BankID are fine
 
-**✅ Result:** Demonstrates multi-lingual content filtering challenges
-
-See [GUARDRAIL_DEMO.md](GUARDRAIL_DEMO.md) for detailed guardrail testing.
+**✅ Result:** Demonstrates guardrails blocking sensitive PII while allowing general discussion
 
 ---
 

@@ -2,7 +2,7 @@
 Products MCP Server
 
 Implements the MCP JSON-RPC protocol for product catalog tools.
-AgentCore Gateway invokes this Lambda and wraps responses in MCP format.
+AgentCore Gateway invokes this Lambda and routes tool calls based on Cedar policies.
 
 Tools:
 - list_products: List all products with optional category filter
@@ -28,7 +28,7 @@ SAMPLE_PRODUCTS = [
         "category": "electronics",
         "price": 12.99,
         "stock": 0,
-        "description": "Durable USB-C charging and data cable, 6ft length - Currently slut (sold out) in Nordic warehouse"
+        "description": "Durable USB-C charging and data cable, 6ft braided nylon"
     },
     {
         "id": "PROD-003",
@@ -36,7 +36,7 @@ SAMPLE_PRODUCTS = [
         "category": "accessories",
         "price": 45.00,
         "stock": 80,
-        "description": "Adjustable aluminum laptop stand with quick fart (speed) height adjustment mechanism"
+        "description": "Adjustable aluminum laptop stand with quick height adjustment mechanism"
     },
     {
         "id": "PROD-004",
@@ -52,7 +52,7 @@ SAMPLE_PRODUCTS = [
         "category": "accessories",
         "price": 24.50,
         "stock": 120,
-        "description": "Multi-compartment desk organizer with prick (dot) markers for labeling compartments"
+        "description": "Multi-compartment desk organizer with color-coded labels"
     },
     {
         "id": "PROD-006",

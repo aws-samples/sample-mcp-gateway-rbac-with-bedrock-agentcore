@@ -124,28 +124,27 @@ when {
 ```
 ┌────────────────────────────────────────┐
 │  Browser (chatbox.html)                │
-│  Team Alpha: API Key (in config)      │
-│  Team Beta:  API Key (in config)      │
+│  Team Alpha: API Key → team-alpha      │
+│  Team Beta:  API Key → team-beta       │
 └────────────────┬───────────────────────┘
-                 │ HTTPS POST /mcp
+                 │ HTTPS + x-api-key
                  ▼
       ┌──────────────────────┐
-      │   API Gateway        │
-      │   (HTTP API)         │
-      │   • No auth required │
-      │     (demo only)      │
+      │   API Gateway (REST) │
+      │   • Validates API key│
+      │   • Usage plans      │
+      │   • Rate limiting    │
       └──────────┬───────────┘
                  │
                  ▼
       ┌─────────────────────────────────┐
       │  Lambda Proxy                   │
-      │  1. Extract team from request   │
+      │  1. Map key → team              │
       │  2. Check model permissions     │
-      │  3. Call Bedrock API directly   │
+      │  3. Call bedrock.invoke_model() │
       │  4. Log with team attribution   │
       └──────────┬──────────────────────┘
-                 │ boto3.client('bedrock-runtime')
-                 │ .invoke_model()
+                 │
                  ▼
       ┌─────────────────────────┐
       │  AWS Bedrock API        │
@@ -178,10 +177,9 @@ when {
 
 ### Security Model (Demo #2)
 
-**Authentication:** None in demo (HTTP API without API keys)
-- For production: Add REST API + API keys, or Cognito
+**Authentication:** REST API Gateway with API keys and usage plans
 
-**Authorization:** Model permissions enforced in Lambda code
+**Authorization:** Model permissions enforced in Lambda code per team
 
 **Lambda Environment Variables:**
 ```python
@@ -202,7 +200,7 @@ Lambda Execution Role:
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| **API Gateway** | HTTP API (V2) | Entry point for chatbox |
+| **API Gateway** | REST API with API keys | Entry point with auth + rate limiting |
 | **Lambda Proxy** | AWS Lambda (Python) | Model governance + Bedrock calls |
 | **Bedrock API** | AWS Bedrock runtime | Claude model inference |
 | **Chatbox** | Static HTML/JS | Browser UI for testing |
@@ -217,7 +215,7 @@ Lambda Execution Role:
 | **Authorization** | Cedar policies (tag-based) | Lambda code (team-based) |
 | **Interface** | VS Code stdio | Browser HTTPS |
 | **Permissions Level** | Tool-level (list vs create) | Model-level (Haiku vs Sonnet) |
-| **Authentication** | IAM user credentials | None (demo) |
+| **Authentication** | IAM user credentials | API keys + usage plans |
 | **AWS Services** | AgentCore (preview), Lambda | API Gateway, Lambda, Bedrock |
 | **Cost Tracking** | Per IAM user | Per team (in Lambda logs) |
 
@@ -339,11 +337,12 @@ Lambda Execution Role:
 
 ### Demo #2 (Production Recommendations)
 
-- ⚠️ **Add authentication** - Switch to REST API + API keys or Cognito
-- ✅ Store API key→team mapping in Secrets Manager (not hardcoded)
-- ✅ Enable AWS WAF for DDoS protection
-- ✅ Set CloudWatch log retention (default is forever)
-- ✅ Add rate limiting per team (API Gateway usage plans)
+- ✅ REST API with API keys and usage plans (implemented)
+- ✅ Rate limiting per team via usage plans (implemented)
+- ✅ Store API key→team mapping in environment variables or Secrets Manager
+- ✅ Enable AWS WAF for DDoS protection (optional)
+- ✅ Set CloudWatch log retention (implemented, configurable)
+- ✅ Structured audit logging for CloudWatch Insights (implemented)
 
 ---
 
@@ -366,5 +365,5 @@ Lambda Execution Role:
 ---
 
 **Architecture Version:** 2.0  
-**Last Updated:** May 30, 2026  
+**Last Updated:** June 2026  
 **Note:** These are two independent architectures. Pick one based on your use case.
