@@ -80,6 +80,7 @@ htmlcov/
 *.key
 *.p12
 *.pfx
+.credentials-*
 
 # CloudFormation outputs
 outputs.json

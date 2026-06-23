@@ -162,3 +162,6 @@ destroy-demo2: ## Delete Demo 2 CloudFormation stack
 	@echo "Waiting for deletion..."
 	@aws cloudformation wait stack-delete-complete --stack-name $(STACK_NAME) --region $(REGION)
 	@echo -e "$(GREEN)Stack deleted.$(NC)"
+
+verify-cleanup: ## Verify no demo resources remain in your account
+	@./scripts/verify-cleanup.sh $(REGION)

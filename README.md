@@ -2,6 +2,13 @@
 
 > **Two independent demos showing different patterns for governing AI access at scale**
 
+| | Demo #1: AgentCore Gateway | Demo #2: Team RBAC Chat |
+|---|---|---|
+| **⏱️ Deploy Time** | **~15 minutes** | **~10 minutes** |
+| **Interface** | VS Code + GitHub Copilot | Browser chatbox |
+| **Governance Level** | Tool-level (Cedar RBAC) | Model-level (per-team) |
+| **Preview Access?** | ⚠️ Yes (AgentCore) | ✅ No — standard AWS |
+
 This repository contains **two separate, independent demos** that solve different problems. Pick the one that matches your use case.
 
 ---
@@ -399,12 +406,32 @@ agentcore --version
 
 ---
 
+## 🧹 Cleanup & Verification
+
+After a demo, verify nothing is left running in your account:
+
+```bash
+# Verify all resources are deleted
+./scripts/verify-cleanup.sh
+
+# Or tear down + verify in one go:
+make destroy-demo2                    # Demo 2
+aws cloudformation delete-stack \     # Demo 1
+  --stack-name mcp-demo --region us-east-1
+./scripts/verify-cleanup.sh           # Confirm clean
+```
+
+The verification script checks CloudFormation stacks, Lambda functions, IAM users/roles, API Gateways, and CloudWatch log groups — then tells you exactly what's still active and how to remove it.
+
+---
+
 ## Resources
 
 - [AWS Bedrock Documentation](https://docs.aws.amazon.com/bedrock/)
 - [AWS Bedrock AgentCore Documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/agentcore.html)
 - [Model Context Protocol Specification](https://modelcontextprotocol.io/)
 - [Cedar Policy Language](https://www.cedarpolicy.com/)
+- [📄 Customer One-Pager (leave-behind)](docs/customer-one-pager.md) — print/export to PDF for customer meetings
 
 ---
 

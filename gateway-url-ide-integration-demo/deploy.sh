@@ -120,16 +120,23 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "STEP 5/5 — Creating access keys for test IAM users..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+# Write credentials to file (not stdout) to avoid exposing secrets during screen sharing
+CREDENTIALS_FILE="$SCRIPT_DIR/.credentials-${PREFIX}.txt"
+
 echo ""
 echo "  Creating key for ${PREFIX}-readonly..."
 READONLY_KEY=$(aws iam create-access-key --user-name "${PREFIX}-readonly" --output json 2>/dev/null || echo "EXISTS")
 if [ "$READONLY_KEY" != "EXISTS" ]; then
   RO_AK=$(echo "$READONLY_KEY" | python3 -c "import json,sys; print(json.load(sys.stdin)['AccessKey']['AccessKeyId'])")
   RO_SK=$(echo "$READONLY_KEY" | python3 -c "import json,sys; print(json.load(sys.stdin)['AccessKey']['SecretAccessKey'])")
-  echo "  [${PREFIX}-readonly]"
-  echo "  aws_access_key_id = $RO_AK"
-  echo "  aws_secret_access_key = $RO_SK"
-  echo "  region = $REGION"
+  cat >> "$CREDENTIALS_FILE" <<EOF
+[${PREFIX}-readonly]
+aws_access_key_id = $RO_AK
+aws_secret_access_key = $RO_SK
+region = $REGION
+
+EOF
+  echo "  ✅ Key created for ${PREFIX}-readonly"
 else
   echo "  ⏭️  Key already exists for ${PREFIX}-readonly"
 fi
@@ -140,12 +147,25 @@ FULL_KEY=$(aws iam create-access-key --user-name "${PREFIX}-fullaccess" --output
 if [ "$FULL_KEY" != "EXISTS" ]; then
   FA_AK=$(echo "$FULL_KEY" | python3 -c "import json,sys; print(json.load(sys.stdin)['AccessKey']['AccessKeyId'])")
   FA_SK=$(echo "$FULL_KEY" | python3 -c "import json,sys; print(json.load(sys.stdin)['AccessKey']['SecretAccessKey'])")
-  echo "  [${PREFIX}-fullaccess]"
-  echo "  aws_access_key_id = $FA_AK"
-  echo "  aws_secret_access_key = $FA_SK"
-  echo "  region = $REGION"
+  cat >> "$CREDENTIALS_FILE" <<EOF
+[${PREFIX}-fullaccess]
+aws_access_key_id = $FA_AK
+aws_secret_access_key = $FA_SK
+region = $REGION
+
+EOF
+  echo "  ✅ Key created for ${PREFIX}-fullaccess"
 else
   echo "  ⏭️  Key already exists for ${PREFIX}-fullaccess"
+fi
+
+# Set restrictive permissions on credentials file
+if [ -f "$CREDENTIALS_FILE" ]; then
+  chmod 600 "$CREDENTIALS_FILE"
+  echo ""
+  echo "  🔐 Credentials saved to: $CREDENTIALS_FILE"
+  echo "  📋 To configure AWS CLI profiles, run:"
+  echo "     cat $CREDENTIALS_FILE >> ~/.aws/credentials"
 fi
 
 # ── Done ──
