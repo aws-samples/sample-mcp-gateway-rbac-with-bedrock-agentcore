@@ -1,0 +1,157 @@
+[
+  {
+    "id": "PROD-001",
+    "name": "Wireless Mouse",
+    "category": "electronics",
+    "price": 29.99,
+    "currency": "USD",
+    "stock": 150,
+    "sku": "WM-2024-BLK",
+    "description": "Ergonomic wireless mouse with 2.4GHz connectivity, 1600 DPI optical sensor, and 12-month battery life",
+    "features": [
+      "Ergonomic design",
+      "2.4GHz wireless",
+      "1600 DPI optical sensor",
+      "12-month battery life",
+      "6 programmable buttons"
+    ],
+    "weight_oz": 3.5,
+    "dimensions": "4.5 x 2.8 x 1.6 inches"
+  },
+  {
+    "id": "PROD-002",
+    "name": "USB-C Cable",
+    "category": "electronics",
+    "price": 12.99,
+    "currency": "USD",
+    "stock": 300,
+    "sku": "USBC-6FT-GRY",
+    "description": "Durable USB-C charging and data cable with braided nylon exterior, 6ft length, supports fast charging up to 60W",
+    "features": [
+      "6 feet length",
+      "Braided nylon exterior",
+      "60W fast charging",
+      "480 Mbps data transfer",
+      "Reinforced connectors"
+    ],
+    "weight_oz": 1.2,
+    "dimensions": "6 feet (uncoiled)"
+  },
+  {
+    "id": "PROD-003",
+    "name": "Laptop Stand",
+    "category": "accessories",
+    "price": 45.00,
+    "currency": "USD",
+    "stock": 80,
+    "sku": "LS-ALU-ADJ",
+    "description": "Adjustable aluminum laptop stand for better ergonomics, fits laptops up to 17 inches, height adjustable from 2 to 6 inches",
+    "features": [
+      "Aluminum construction",
+      "Height adjustable (2-6 inches)",
+      "Fits laptops up to 17\"",
+      "Non-slip rubber pads",
+      "Foldable design"
+    ],
+    "weight_oz": 24,
+    "dimensions": "10 x 9 x 2 inches (folded)"
+  },
+  {
+    "id": "PROD-004",
+    "name": "Mechanical Keyboard",
+    "category": "electronics",
+    "price": 89.99,
+    "currency": "USD",
+    "stock": 45,
+    "sku": "KB-MECH-RGB",
+    "description": "RGB mechanical keyboard with blue switches, per-key RGB lighting, aluminum frame, and programmable keys",
+    "features": [
+      "Mechanical blue switches",
+      "Per-key RGB lighting",
+      "Aluminum frame",
+      "Programmable macros",
+      "N-key rollover",
+      "USB-C connection"
+    ],
+    "weight_oz": 42,
+    "dimensions": "17.5 x 5.5 x 1.5 inches"
+  },
+  {
+    "id": "PROD-005",
+    "name": "Desk Organizer",
+    "category": "accessories",
+    "price": 24.50,
+    "currency": "USD",
+    "stock": 120,
+    "sku": "DO-WOOD-5C",
+    "description": "Multi-compartment bamboo desk organizer with 5 compartments for office supplies, phone holder, and drawer",
+    "features": [
+      "Bamboo construction",
+      "5 compartments",
+      "Phone holder slot",
+      "Small drawer",
+      "Non-slip bottom"
+    ],
+    "weight_oz": 18,
+    "dimensions": "11 x 7 x 4 inches"
+  },
+  {
+    "id": "PROD-006",
+    "name": "Monitor Arm",
+    "category": "accessories",
+    "price": 79.99,
+    "currency": "USD",
+    "stock": 60,
+    "sku": "MA-GAS-VESA",
+    "description": "Adjustable single monitor arm mount with gas spring, supports VESA 75x75 and 100x100, holds monitors up to 32 inches and 17.6 lbs",
+    "features": [
+      "Gas spring mechanism",
+      "VESA 75x75/100x100 compatible",
+      "Supports up to 32\" monitors",
+      "17.6 lbs weight capacity",
+      "Cable management",
+      "360° rotation"
+    ],
+    "weight_oz": 88,
+    "dimensions": "Package: 19 x 12 x 5 inches"
+  },
+  {
+    "id": "PROD-007",
+    "name": "Webcam HD",
+    "category": "electronics",
+    "price": 59.99,
+    "currency": "USD",
+    "stock": 95,
+    "sku": "WC-1080-MIC",
+    "description": "1080p HD webcam with built-in dual microphones, auto-focus, and low-light correction for video calls and streaming",
+    "features": [
+      "1080p @ 30fps",
+      "Built-in dual microphones",
+      "Auto-focus",
+      "Low-light correction",
+      "Privacy shutter",
+      "USB 2.0 plug-and-play"
+    ],
+    "weight_oz": 5.6,
+    "dimensions": "3.7 x 2.3 x 2.8 inches"
+  },
+  {
+    "id": "PROD-008",
+    "name": "Headphone Stand",
+    "category": "accessories",
+    "price": 19.99,
+    "currency": "USD",
+    "stock": 200,
+    "sku": "HS-ALU-BLK",
+    "description": "Sleek aluminum headphone stand with cable holder and non-slip base, fits all headphone sizes",
+    "features": [
+      "Aluminum construction",
+      "Cable management clip",
+      "Non-slip silicone base",
+      "Fits all headphone sizes",
+      "Modern design"
+    ],
+    "weight_oz": 14,
+    "dimensions": "4.3 x 4.3 x 10.6 inches"
+  }
+]

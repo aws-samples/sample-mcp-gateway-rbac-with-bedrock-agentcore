@@ -1,0 +1,28 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "GatewayReadOnlyAccess",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-agentcore:InvokeGateway"
+      ],
+      "Resource": "arn:aws:bedrock-agentcore:<REGION>:<ACCOUNT_ID>:gateway/<GATEWAY_ID>-*",
+      "Condition": {
+        "StringEquals": {
+          "bedrock-agentcore:ToolName": [
+            "customers-mcp___list_customers",
+            "customers-mcp___get_customer_by_id",
+            "orders-mcp___list_orders",
+            "orders-mcp___get_order_by_id",
+            "products-mcp___list_products",
+            "products-mcp___get_product_by_id",
+            "products-mcp___search_products",
+            "jira-mcp___list_jira_tickets",
+            "x_amz_bedrock_agentcore_search"
+          ]
+        }
+      }
+    }
+  ]
+}

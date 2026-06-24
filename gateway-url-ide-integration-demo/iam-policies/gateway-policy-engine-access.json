@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowGatewayToAccessPolicyEngine",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-agentcore:GetPolicyEngine",
+        "bedrock-agentcore:EvaluatePolicy",
+        "bedrock-agentcore:CheckAuthorizePermissions",
+        "bedrock-agentcore:AuthorizeAction",
+        "bedrock-agentcore:PartiallyAuthorizeActions"
+      ],
+      "Resource": [
+        "arn:aws:bedrock-agentcore:<REGION>:<ACCOUNT_ID>:policy-engine/*",
+        "arn:aws:bedrock-agentcore:<REGION>:<ACCOUNT_ID>:/policy-engines/*",
+        "arn:aws:bedrock-agentcore:<REGION>:<ACCOUNT_ID>:gateway/*"
+      ]
+    }
+  ]
+}

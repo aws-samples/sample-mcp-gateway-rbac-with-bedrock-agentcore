@@ -1,0 +1,98 @@
+# Demo 1: AgentCore Gateway with VS Code Integration
+# Architecture Diagram (ASCII - convert to draw.io)
+
+┌─────────────────────────────────────────────────────────────────┐
+│  Developer Workstation                                          │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │  VS Code + GitHub Copilot                                 │ │
+│  │                                                            │ │
+│  │  IAM User Credentials:                                    │ │
+│  │  - alice@company.com (tag: group=ReadOnly)                │ │
+│  │  - bob@company.com (tag: group=FullAccess)                │ │
+│  └─────────────────────────┬─────────────────────────────────┘ │
+└───────────────────────────┼───────────────────────────────────┘
+                            │
+                            │ stdio (MCP protocol)
+                            │
+                            ▼
+              ┌─────────────────────────────┐
+              │   MCP Proxy (local)         │
+              │   - Reads ~/.aws/credentials│
+              │   - Signs with SigV4        │
+              │   - Converts stdio → HTTPS  │
+              └─────────────┬───────────────┘
+                            │
+                            │ HTTPS + SigV4
+                            │ (bedrock-agentcore service)
+                            ▼
+          ┌─────────────────────────────────────────┐
+          │  AWS Bedrock AgentCore Gateway          │
+          │  ARN: arn:aws:bedrock-agentcore:...     │
+          │                                         │
+          │  ┌───────────────────────────────────┐  │
+          │  │  Cedar Policy Engine              │  │
+          │  │                                   │  │
+          │  │  1. Validate SigV4 signature      │  │
+          │  │  2. Read IAM user tags            │  │
+          │  │  3. Evaluate Cedar policies       │  │
+          │  │  4. Permit or Deny                │  │
+          │  └───────────────────────────────────┘  │
+          └─────────────┬───────────────────────────┘
+                        │
+        ┌───────────────┼───────────────┬───────────┐
+        │               │               │           │
+        ▼               ▼               ▼           ▼
+   ┌─────────┐    ┌─────────┐    ┌─────────┐  ┌─────────┐
+   │Customers│    │Products │    │ Orders  │  │  Jira   │
+   │  MCP    │    │  MCP    │    │  MCP    │  │  MCP    │
+   │         │    │         │    │         │  │         │
+   │ Lambda  │    │ Lambda  │    │ Lambda  │  │ Lambda  │
+   │ Python  │    │ Python  │    │ Python  │  │ Python  │
+   └─────────┘    └─────────┘    └─────────┘  └─────────┘
+        │               │               │           │
+        ▼               ▼               ▼           ▼
+   [Customer DB]  [Product DB]   [Order DB]  [Jira API]
+
+# Cedar Policy Example
+
+permit(
+    principal,
+    action in [
+        Action::"customers-mcp___list_customers",
+        Action::"customers-mcp___get_customer_by_id",
+        Action::"orders-mcp___list_orders"
+    ],
+    resource == Gateway::"<GATEWAY_ARN>"
+)
+when {
+    principal.hasTag("group") &&
+    principal.getTag("group") == "ReadOnly"
+};
+
+# Request Flow
+
+1. GitHub Copilot calls MCP tool (e.g., list_customers)
+2. VS Code MCP client → Local MCP Proxy (stdio)
+3. MCP Proxy signs request with IAM user credentials (SigV4)
+4. HTTPS POST to AgentCore Gateway
+5. Gateway validates signature, reads IAM tags
+6. Cedar evaluates: Does alice@company.com (ReadOnly) have permission?
+7. If permit: Route to Customers Lambda MCP
+8. If deny: Return 403 Forbidden
+9. Lambda executes tool, returns result
+10. Response flows back: Lambda → Gateway → Proxy → Copilot → VS Code
+
+# Key Components
+
+- AgentCore Gateway: AWS-managed service (preview)
+- Cedar Policies: Tag-based RBAC rules
+- Lambda MCPs: Tool implementations (Python 3.11)
+- MCP Proxy: Local bridge (stdio → HTTPS)
+- VS Code: Developer interface
+
+# Security Model
+
+- Authentication: IAM user credentials (SigV4)
+- Authorization: Cedar policies + IAM tags
+- Audit: CloudWatch logs (every tool call logged with IAM principal)

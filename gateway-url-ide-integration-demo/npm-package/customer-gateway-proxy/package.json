@@ -1,0 +1,14 @@
+{
+  "name": "@demo/customer-gateway-mcp",
+  "version": "1.0.0",
+  "description": "MCP proxy for customer gateway - provides access to customers, products, orders, and Jira",
+  "bin": {
+    "customer-gateway-mcp": "./bin/proxy.sh"
+  },
+  "keywords": ["mcp", "model-context-protocol", "aws", "agentcore"],
+  "author": "Demo Company",
+  "license": "MIT-0",
+  "engines": {
+    "node": ">=18"
+  }
+}
