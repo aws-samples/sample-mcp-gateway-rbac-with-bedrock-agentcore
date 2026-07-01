@@ -1,0 +1,608 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Bifrost AI Gateway - ECS Fargate cluster, task definition, and service.
+  Two containers per task: Bifrost gateway + ADOT collector sidecar.
+  Config persisted on EFS. IAM role grants Bedrock + CloudWatch access.
+
+Parameters:
+  StackPrefix:
+    Type: String
+    Default: bifrost
+
+  BifrostImage:
+    Type: String
+    Default: maximhq/bifrost:latest
+    Description: Bifrost Docker image
+
+  AdotImage:
+    Type: String
+    Default: public.ecr.aws/aws-observability/aws-otel-collector:latest
+    Description: AWS Distro for OpenTelemetry collector image
+
+  TaskCpu:
+    Type: Number
+    Default: 1024
+    AllowedValues: [256, 512, 1024, 2048, 4096]
+
+  TaskMemory:
+    Type: Number
+    Default: 2048
+    AllowedValues: [512, 1024, 2048, 4096, 8192]
+
+  DesiredCount:
+    Type: Number
+    Default: 1
+
+  DailyTokenLimitAlpha:
+    Type: Number
+    Default: 100000
+
+  DailyTokenLimitBeta:
+    Type: Number
+    Default: 50000
+
+  MonthlyTokenLimit:
+    Type: Number
+    Default: 2000000
+
+  BifrostEncryptionKey:
+    Type: String
+    NoEcho: true
+    Description: 32-byte encryption key for Bifrost config store
+    Default: ''
+
+Resources:
+
+  # ── EFS for Bifrost config persistence ───────────────────────────
+  BifrostEfs:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub '${StackPrefix}-config'
+
+  EfsMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref BifrostEfs
+      SubnetId: !ImportValue
+        Fn::Sub: '${StackPrefix}-PrivateSubnet1Id'
+      SecurityGroups:
+        - !ImportValue
+          Fn::Sub: '${StackPrefix}-EfsSgId'
+
+  EfsMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref BifrostEfs
+      SubnetId: !ImportValue
+        Fn::Sub: '${StackPrefix}-PrivateSubnet2Id'
+      SecurityGroups:
+        - !ImportValue
+          Fn::Sub: '${StackPrefix}-EfsSgId'
+
+  EfsAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref BifrostEfs
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /bifrost-data
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+
+  # ── CloudWatch Log Groups ─────────────────────────────────────────
+  BifrostLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/bifrost/container'
+      RetentionInDays: 30
+
+  AdotLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/bifrost/adot-collector'
+      RetentionInDays: 7
+
+  BifrostAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/bifrost/access'
+      RetentionInDays: 90
+
+  BifrostAuditLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/bifrost/audit'
+      RetentionInDays: 365
+
+  # ── SSM Parameters for runtime config ────────────────────────────
+  EncryptionKeyParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/${StackPrefix}/encryption-key'
+      Type: String
+      Value: !If
+        - HasEncryptionKey
+        - !Ref BifrostEncryptionKey
+        - 'bifrost-default-key-32byteslong!!'
+      Description: Bifrost config store encryption key
+
+  # ── IAM Roles ─────────────────────────────────────────────────────
+  EcsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${StackPrefix}-ecs-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SSMAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${StackPrefix}/*'
+
+  EcsTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${StackPrefix}-ecs-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource:
+                  - arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku*
+                  - arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet*
+                  - arn:aws:bedrock:*::foundation-model/anthropic.claude-opus*
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-haiku*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-opus*'
+        - PolicyName: CloudWatchMetrics
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:CreateLogGroup
+                Resource: '*'
+        - PolicyName: XRayAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                  - xray:GetSamplingStatisticSummaries
+                Resource: '*'
+        - PolicyName: EfsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                  - elasticfilesystem:DescribeMountTargets
+                Resource: !GetAtt BifrostEfs.Arn
+
+  # ── ADOT Collector config stored in SSM ───────────────────────────
+  AdotConfigParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/${StackPrefix}/adot-config'
+      Type: String
+      Value: !Sub |
+        extensions:
+          health_check:
+            endpoint: 0.0.0.0:13133
+
+        receivers:
+          prometheus:
+            config:
+              scrape_configs:
+                - job_name: 'bifrost'
+                  scrape_interval: 15s
+                  static_configs:
+                    - targets: ['localhost:8080']
+                  metrics_path: '/metrics'
+                  relabel_configs:
+                    - source_labels: [__name__]
+                      regex: 'go_.*'
+                      action: drop
+
+          otlp:
+            protocols:
+              grpc:
+                endpoint: 0.0.0.0:4317
+              http:
+                endpoint: 0.0.0.0:4318
+
+        processors:
+          resource_detection:
+            detectors: [env, ecs, ec2]
+            timeout: 5s
+            override: false
+
+          attributes/bifrost:
+            actions:
+              - key: service.name
+                value: bifrost-gateway
+                action: upsert
+              - key: deployment.environment
+                value: production
+                action: upsert
+
+          # Rename Bifrost Prometheus labels to CloudWatch dimension names
+          metricstransform/dimensions:
+            transforms:
+              - include: bifrost_.*
+                match_type: regexp
+                action: update
+                operations:
+                  - action: update_label
+                    label: virtual_key
+                    new_label: team
+                  - action: update_label
+                    label: provider
+                    new_label: llm_provider
+                  - action: update_label
+                    label: model
+                    new_label: model
+
+          filter/relevant:
+            metrics:
+              include:
+                match_type: regexp
+                metric_names:
+                  - bifrost_.*
+                  - process_.*
+                  - go_memstats_.*
+
+          batch:
+            send_batch_size: 50
+            timeout: 10s
+
+        exporters:
+          awsemf:
+            namespace: Bifrost/Gateway
+            region: ${AWS::Region}
+            log_group_name: /bifrost/metrics
+            log_stream_name: bifrost-gateway
+            dimension_rollup_option: NoDimensionRollup
+            metric_declarations:
+              - dimensions:
+                  - [team, model]
+                  - [team]
+                  - [model]
+                metric_name_selectors:
+                  - bifrost_requests_total
+                  - bifrost_tokens_input_total
+                  - bifrost_tokens_output_total
+                  - bifrost_request_duration_seconds.*
+                  - bifrost_errors_total
+              - dimensions:
+                  - [team]
+                metric_name_selectors:
+                  - bifrost_virtual_key_budget_used.*
+                  - bifrost_virtual_key_requests_total
+
+          awsxray:
+            region: ${AWS::Region}
+            indexed_attributes:
+              - team
+              - model
+              - llm_provider
+
+          logging:
+            loglevel: warn
+
+        service:
+          extensions: [health_check]
+          pipelines:
+            metrics:
+              receivers: [prometheus, otlp]
+              processors: [resource_detection, attributes/bifrost, metricstransform/dimensions, filter/relevant, batch]
+              exporters: [awsemf]
+            traces:
+              receivers: [otlp]
+              processors: [resource_detection, attributes/bifrost, batch]
+              exporters: [awsxray]
+
+  # ── ECS Cluster ───────────────────────────────────────────────────
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub '${StackPrefix}-cluster'
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+
+  # ── Task Definition ───────────────────────────────────────────────
+  BifrostTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn:
+      - EfsMountTarget1
+      - EfsMountTarget2
+    Properties:
+      Family: !Sub '${StackPrefix}-task'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      ExecutionRoleArn: !GetAtt EcsTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+
+      Volumes:
+        - Name: bifrost-data
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref BifrostEfs
+            RootDirectory: /
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref EfsAccessPoint
+              IAM: ENABLED
+
+      ContainerDefinitions:
+        # ── Bifrost container ───────────────────────────────────────
+        - Name: bifrost
+          Image: !Ref BifrostImage
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          Command:
+            - '-host'
+            - '0.0.0.0'
+            - '-port'
+            - '8080'
+            - '-app-dir'
+            - '/app/data'
+          Environment:
+            - Name: BIFROST_HOST
+              Value: '0.0.0.0'
+            - Name: APP_PORT
+              Value: '8080'
+            - Name: LOG_LEVEL
+              Value: info
+            - Name: LOG_STYLE
+              Value: json
+            - Name: TEAM_ALPHA_DAILY_LIMIT
+              Value: !Sub '${DailyTokenLimitAlpha}'
+            - Name: TEAM_BETA_DAILY_LIMIT
+              Value: !Sub '${DailyTokenLimitBeta}'
+            - Name: MONTHLY_TOKEN_LIMIT
+              Value: !Sub '${MonthlyTokenLimit}'
+            # OTEL endpoint — sidecar on localhost
+            - Name: OTEL_EXPORTER_OTLP_ENDPOINT
+              Value: 'http://localhost:4318'
+            - Name: OTEL_SERVICE_NAME
+              Value: bifrost-gateway
+          Secrets:
+            - Name: BIFROST_ENCRYPTION_KEY
+              ValueFrom: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${StackPrefix}/encryption-key'
+          MountPoints:
+            - SourceVolume: bifrost-data
+              ContainerPath: /app/data
+              ReadOnly: false
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref BifrostLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: bifrost
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - 'wget -qO- http://localhost:8080/health || exit 1'
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+          Ulimits:
+            - Name: nofile
+              SoftLimit: 65536
+              HardLimit: 65536
+
+        # ── ADOT Collector sidecar ──────────────────────────────────
+        - Name: adot-collector
+          Image: !Ref AdotImage
+          Essential: false
+          Command:
+            - '--config'
+            - 'env:ADOT_CONFIG'
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+          Secrets:
+            - Name: ADOT_CONFIG
+              ValueFrom: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${StackPrefix}/adot-config'
+          PortMappings:
+            - ContainerPort: 4317
+              Protocol: tcp
+            - ContainerPort: 4318
+              Protocol: tcp
+            - ContainerPort: 13133
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref AdotLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: adot
+          DependsOn:
+            - ContainerName: bifrost
+              Condition: START
+
+  # ── ALB ───────────────────────────────────────────────────────────
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${StackPrefix}-alb'
+      Scheme: internal
+      Type: application
+      Subnets:
+        - !ImportValue
+          Fn::Sub: '${StackPrefix}-PrivateSubnet1Id'
+        - !ImportValue
+          Fn::Sub: '${StackPrefix}-PrivateSubnet2Id'
+      SecurityGroups:
+        - !ImportValue
+          Fn::Sub: '${StackPrefix}-AlbSgId'
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '120'
+        - Key: routing.http2.enabled
+          Value: 'true'
+
+  AlbTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${StackPrefix}-tg'
+      VpcId: !ImportValue
+        Fn::Sub: '${StackPrefix}-VpcId'
+      Protocol: HTTP
+      Port: 8080
+      TargetType: ip
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '30'
+        - Key: stickiness.enabled
+          Value: 'true'
+        - Key: stickiness.type
+          Value: 'lb_cookie'
+        - Key: stickiness.lb_cookie.duration_seconds
+          Value: '86400'
+
+  AlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AlbTargetGroup
+
+  # ── ECS Service ───────────────────────────────────────────────────
+  BifrostService:
+    Type: AWS::ECS::Service
+    DependsOn: AlbListener
+    Properties:
+      ServiceName: !Sub '${StackPrefix}-service'
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref BifrostTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - !ImportValue
+              Fn::Sub: '${StackPrefix}-PrivateSubnet1Id'
+            - !ImportValue
+              Fn::Sub: '${StackPrefix}-PrivateSubnet2Id'
+          SecurityGroups:
+            - !ImportValue
+              Fn::Sub: '${StackPrefix}-EcsSgId'
+          AssignPublicIp: DISABLED
+      LoadBalancers:
+        - ContainerName: bifrost
+          ContainerPort: 8080
+          TargetGroupArn: !Ref AlbTargetGroup
+      HealthCheckGracePeriodSeconds: 90
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+
+Conditions:
+  HasEncryptionKey: !Not [!Equals [!Ref BifrostEncryptionKey, '']]
+
+Outputs:
+  AlbArn:
+    Value: !Ref Alb
+    Export:
+      Name: !Sub '${StackPrefix}-AlbArn'
+
+  AlbDnsName:
+    Value: !GetAtt Alb.DNSName
+    Export:
+      Name: !Sub '${StackPrefix}-AlbDnsName'
+
+  AlbHostedZoneId:
+    Value: !GetAtt Alb.CanonicalHostedZoneID
+    Export:
+      Name: !Sub '${StackPrefix}-AlbHostedZoneId'
+
+  AlbTargetGroupArn:
+    Value: !Ref AlbTargetGroup
+    Export:
+      Name: !Sub '${StackPrefix}-AlbTargetGroupArn'
+
+  EcsClusterArn:
+    Value: !GetAtt EcsCluster.Arn
+    Export:
+      Name: !Sub '${StackPrefix}-EcsClusterArn'
+
+  EfsId:
+    Value: !Ref BifrostEfs
+    Export:
+      Name: !Sub '${StackPrefix}-EfsId'
+
+  BifrostAccessLogGroupName:
+    Value: !Ref BifrostAccessLogGroup
+    Export:
+      Name: !Sub '${StackPrefix}-AccessLogGroupName'
+
+  BifrostAuditLogGroupName:
+    Value: !Ref BifrostAuditLogGroup
+    Export:
+      Name: !Sub '${StackPrefix}-AuditLogGroupName'

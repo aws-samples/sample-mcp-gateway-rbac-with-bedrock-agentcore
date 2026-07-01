@@ -1,0 +1,553 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Bifrost AI Gateway - CloudWatch observability stack.
+  - CloudWatch Dashboard with per-team, per-model, quota metrics
+  - CloudWatch Alarms for budget breaches, errors, latency
+  - Lambda function to compute and publish quota utilisation %
+  - Metric filters on access logs for team/model attribution
+  - SNS topic for alarm notifications
+
+Parameters:
+  StackPrefix:
+    Type: String
+    Default: bifrost
+
+  AlarmEmail:
+    Type: String
+    Default: ''
+    Description: Optional email for alarm notifications
+
+  DailyTokenLimitAlpha:
+    Type: Number
+    Default: 100000
+
+  DailyTokenLimitBeta:
+    Type: Number
+    Default: 50000
+
+  QuotaPublisherSchedule:
+    Type: String
+    Default: 'rate(5 minutes)'
+    Description: How often to compute and publish quota utilisation metrics
+
+  S3ArtifactBucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment packages
+
+  QuotaPublisherCodeKey:
+    Type: String
+    Default: lambda/quota-publisher.zip
+    Description: S3 key for quota publisher Lambda zip
+
+Conditions:
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
+
+Resources:
+
+  # ── SNS Topic ─────────────────────────────────────────────────────
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${StackPrefix}-alarms'
+      DisplayName: Bifrost Gateway Alarms
+
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmEmail
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  # ── Log Groups (referenced from 02-ecs.yaml) ──────────────────────
+  # These are also created in 02-ecs.yaml; we reference by name here
+  MetricsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /bifrost/metrics
+      RetentionInDays: 14
+
+  # ── Metric Filters on Bifrost access logs ─────────────────────────
+  # Bifrost emits structured JSON logs; we extract team+model dimensions
+
+  AlphaRequestFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: /bifrost/access
+      FilterPattern: '{ $.team = "team-alpha" && $.status = "success" }'
+      MetricTransformations:
+        - MetricNamespace: Bifrost/Gateway
+          MetricName: RequestCount
+          MetricValue: '1'
+          Dimensions:
+            - Key: team
+              Value: team-alpha
+          Unit: Count
+
+  BetaRequestFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: /bifrost/access
+      FilterPattern: '{ $.team = "team-beta" && $.status = "success" }'
+      MetricTransformations:
+        - MetricNamespace: Bifrost/Gateway
+          MetricName: RequestCount
+          MetricValue: '1'
+          Dimensions:
+            - Key: team
+              Value: team-beta
+          Unit: Count
+
+  AlphaTokenInputFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: /bifrost/access
+      FilterPattern: '{ $.team = "team-alpha" && $.input_tokens > 0 }'
+      MetricTransformations:
+        - MetricNamespace: Bifrost/Gateway
+          MetricName: TokensInput
+          MetricValue: $.input_tokens
+          Dimensions:
+            - Key: team
+              Value: team-alpha
+          Unit: Count
+
+  AlphaTokenOutputFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: /bifrost/access
+      FilterPattern: '{ $.team = "team-alpha" && $.output_tokens > 0 }'
+      MetricTransformations:
+        - MetricNamespace: Bifrost/Gateway
+          MetricName: TokensOutput
+          MetricValue: $.output_tokens
+          Dimensions:
+            - Key: team
+              Value: team-alpha
+          Unit: Count
+
+  BetaTokenInputFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: /bifrost/access
+      FilterPattern: '{ $.team = "team-beta" && $.input_tokens > 0 }'
+      MetricTransformations:
+        - MetricNamespace: Bifrost/Gateway
+          MetricName: TokensInput
+          MetricValue: $.input_tokens
+          Dimensions:
+            - Key: team
+              Value: team-beta
+          Unit: Count
+
+  BetaTokenOutputFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: /bifrost/access
+      FilterPattern: '{ $.team = "team-beta" && $.output_tokens > 0 }'
+      MetricTransformations:
+        - MetricNamespace: Bifrost/Gateway
+          MetricName: TokensOutput
+          MetricValue: $.output_tokens
+          Dimensions:
+            - Key: team
+              Value: team-beta
+          Unit: Count
+
+  ModelDeniedFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: /bifrost/access
+      FilterPattern: '{ $.status = "model_denied" }'
+      MetricTransformations:
+        - MetricNamespace: Bifrost/Gateway
+          MetricName: ModelAccessDenied
+          MetricValue: '1'
+          Unit: Count
+
+  ErrorFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: /bifrost/access
+      FilterPattern: '{ $.status = "error" }'
+      MetricTransformations:
+        - MetricNamespace: Bifrost/Gateway
+          MetricName: Errors
+          MetricValue: '1'
+          Unit: Count
+
+  LatencyFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: /bifrost/access
+      FilterPattern: '{ $.latency_seconds > 0 }'
+      MetricTransformations:
+        - MetricNamespace: Bifrost/Gateway
+          MetricName: LatencySeconds
+          MetricValue: $.latency_seconds
+          Unit: Seconds
+
+  # ── Lambda: Quota Utilisation Publisher ───────────────────────────
+  # Runs every 5 minutes, reads token counters from CloudWatch metrics
+  # and publishes QuotaUtilisationPct for each team as a gauge metric.
+
+  QuotaPublisherLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${StackPrefix}-quota-publisher'
+      RetentionInDays: 7
+
+  QuotaPublisherRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${StackPrefix}-quota-publisher-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudWatchRW
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:PutMetricData
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  QuotaPublisherFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: QuotaPublisherLogGroup
+    Properties:
+      FunctionName: !Sub '${StackPrefix}-quota-publisher'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt QuotaPublisherRole.Arn
+      Timeout: 60
+      MemorySize: 128
+      Code:
+        S3Bucket: !Ref S3ArtifactBucket
+        S3Key: !Ref QuotaPublisherCodeKey
+      Environment:
+        Variables:
+          NAMESPACE: Bifrost/Gateway
+          TEAM_ALPHA_DAILY_LIMIT: !Sub '${DailyTokenLimitAlpha}'
+          TEAM_BETA_DAILY_LIMIT: !Sub '${DailyTokenLimitBeta}'
+          REGION: !Ref AWS::Region
+
+  QuotaPublisherScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${StackPrefix}-quota-schedule'
+      Description: Trigger quota utilisation publisher every 5 minutes
+      ScheduleExpression: !Ref QuotaPublisherSchedule
+      State: ENABLED
+      Targets:
+        - Id: QuotaPublisher
+          Arn: !GetAtt QuotaPublisherFunction.Arn
+
+  QuotaPublisherPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref QuotaPublisherFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt QuotaPublisherScheduleRule.Arn
+
+  # ── CloudWatch Alarms ─────────────────────────────────────────────
+
+  AlphaQuotaWarningAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${StackPrefix}-team-alpha-quota-80pct'
+      AlarmDescription: Team Alpha has consumed 80% of daily token quota
+      Namespace: Bifrost/Gateway
+      MetricName: QuotaUtilisationPct
+      Dimensions:
+        - Name: team
+          Value: team-alpha
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 80
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  AlphaQuotaBreachAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${StackPrefix}-team-alpha-quota-100pct'
+      AlarmDescription: Team Alpha has exhausted daily token quota
+      Namespace: Bifrost/Gateway
+      MetricName: QuotaUtilisationPct
+      Dimensions:
+        - Name: team
+          Value: team-alpha
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 100
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  BetaQuotaBreachAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${StackPrefix}-team-beta-quota-100pct'
+      AlarmDescription: Team Beta has exhausted daily token quota
+      Namespace: Bifrost/Gateway
+      MetricName: QuotaUtilisationPct
+      Dimensions:
+        - Name: team
+          Value: team-beta
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 100
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  HighErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${StackPrefix}-high-error-rate'
+      AlarmDescription: Bifrost gateway error rate elevated
+      Namespace: Bifrost/Gateway
+      MetricName: Errors
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  HighLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${StackPrefix}-high-latency'
+      AlarmDescription: Bifrost gateway latency elevated (>10s)
+      Namespace: Bifrost/Gateway
+      MetricName: LatencySeconds
+      ExtendedStatistic: p99
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # ── CloudWatch Dashboard ──────────────────────────────────────────
+  BifrostDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${StackPrefix}-ai-gateway'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "text",
+              "x": 0, "y": 0, "width": 24, "height": 2,
+              "properties": {
+                "markdown": "# 🚀 Bifrost AI Gateway — Live Observability\nReal-time metrics for team token usage, model access, quota utilisation, and request health.\nRegion: **${AWS::Region}** | Namespace: **Bifrost/Gateway**"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 2, "width": 6, "height": 6,
+              "properties": {
+                "title": "Total Requests Today",
+                "view": "singleValue",
+                "metrics": [
+                  ["Bifrost/Gateway", "RequestCount", "team", "team-alpha", {"stat": "Sum", "period": 86400, "label": "Team Alpha"}],
+                  ["Bifrost/Gateway", "RequestCount", "team", "team-beta", {"stat": "Sum", "period": 86400, "label": "Team Beta"}]
+                ],
+                "period": 86400,
+                "stat": "Sum"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 6, "y": 2, "width": 6, "height": 6,
+              "properties": {
+                "title": "Total Tokens Today",
+                "view": "singleValue",
+                "metrics": [
+                  ["Bifrost/Gateway", "TokensInput", "team", "team-alpha", {"stat": "Sum", "period": 86400, "color": "#2196F3", "label": "Alpha Input"}],
+                  ["Bifrost/Gateway", "TokensOutput", "team", "team-alpha", {"stat": "Sum", "period": 86400, "color": "#64B5F6", "label": "Alpha Output"}],
+                  ["Bifrost/Gateway", "TokensInput", "team", "team-beta", {"stat": "Sum", "period": 86400, "color": "#FF9800", "label": "Beta Input"}],
+                  ["Bifrost/Gateway", "TokensOutput", "team", "team-beta", {"stat": "Sum", "period": 86400, "color": "#FFB74D", "label": "Beta Output"}]
+                ],
+                "period": 86400,
+                "stat": "Sum"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 2, "width": 6, "height": 6,
+              "properties": {
+                "title": "Errors & Denials Today",
+                "view": "singleValue",
+                "metrics": [
+                  ["Bifrost/Gateway", "Errors", {"stat": "Sum", "period": 86400, "color": "#F44336", "label": "Errors"}],
+                  ["Bifrost/Gateway", "ModelAccessDenied", {"stat": "Sum", "period": 86400, "color": "#FF5722", "label": "Model Denials"}]
+                ],
+                "period": 86400,
+                "stat": "Sum"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 18, "y": 2, "width": 6, "height": 6,
+              "properties": {
+                "title": "p99 Latency (seconds)",
+                "view": "singleValue",
+                "metrics": [
+                  ["Bifrost/Gateway", "LatencySeconds", {"stat": "p99", "period": 300, "label": "p99 Latency"}]
+                ],
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 8, "width": 12, "height": 6,
+              "properties": {
+                "title": "Team Alpha — Daily Quota Utilisation %",
+                "view": "gauge",
+                "metrics": [
+                  ["Bifrost/Gateway", "QuotaUtilisationPct", "team", "team-alpha", {"stat": "Maximum", "period": 300, "label": "Alpha Quota %", "color": "#2196F3"}]
+                ],
+                "period": 300,
+                "yAxis": {"left": {"min": 0, "max": 100}},
+                "annotations": {
+                  "horizontal": [
+                    {"value": 80, "color": "#FF9800", "label": "Warning (80%)"},
+                    {"value": 100, "color": "#F44336", "label": "Limit (100%)"}
+                  ]
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 8, "width": 12, "height": 6,
+              "properties": {
+                "title": "Team Beta — Daily Quota Utilisation %",
+                "view": "gauge",
+                "metrics": [
+                  ["Bifrost/Gateway", "QuotaUtilisationPct", "team", "team-beta", {"stat": "Maximum", "period": 300, "label": "Beta Quota %", "color": "#FF9800"}]
+                ],
+                "period": 300,
+                "yAxis": {"left": {"min": 0, "max": 100}},
+                "annotations": {
+                  "horizontal": [
+                    {"value": 80, "color": "#FF9800", "label": "Warning (80%)"},
+                    {"value": 100, "color": "#F44336", "label": "Limit (100%)"}
+                  ]
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 14, "width": 24, "height": 6,
+              "properties": {
+                "title": "Requests per minute by team",
+                "view": "timeSeries",
+                "stacked": false,
+                "metrics": [
+                  ["Bifrost/Gateway", "RequestCount", "team", "team-alpha", {"stat": "Sum", "period": 60, "color": "#2196F3", "label": "Team Alpha"}],
+                  ["Bifrost/Gateway", "RequestCount", "team", "team-beta", {"stat": "Sum", "period": 60, "color": "#FF9800", "label": "Team Beta"}]
+                ],
+                "period": 60,
+                "yAxis": {"left": {"label": "Requests/min", "showUnits": false}}
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 20, "width": 12, "height": 6,
+              "properties": {
+                "title": "Token consumption by team (input + output)",
+                "view": "timeSeries",
+                "stacked": true,
+                "metrics": [
+                  ["Bifrost/Gateway", "TokensInput", "team", "team-alpha", {"stat": "Sum", "period": 300, "color": "#2196F3", "label": "Alpha Input"}],
+                  ["Bifrost/Gateway", "TokensOutput", "team", "team-alpha", {"stat": "Sum", "period": 300, "color": "#64B5F6", "label": "Alpha Output"}],
+                  ["Bifrost/Gateway", "TokensInput", "team", "team-beta", {"stat": "Sum", "period": 300, "color": "#FF9800", "label": "Beta Input"}],
+                  ["Bifrost/Gateway", "TokensOutput", "team", "team-beta", {"stat": "Sum", "period": 300, "color": "#FFB74D", "label": "Beta Output"}]
+                ],
+                "period": 300,
+                "yAxis": {"left": {"label": "Tokens", "showUnits": false}}
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 20, "width": 12, "height": 6,
+              "properties": {
+                "title": "Error rate and model access denials",
+                "view": "timeSeries",
+                "stacked": false,
+                "metrics": [
+                  ["Bifrost/Gateway", "Errors", {"stat": "Sum", "period": 60, "color": "#F44336", "label": "Errors"}],
+                  ["Bifrost/Gateway", "ModelAccessDenied", {"stat": "Sum", "period": 60, "color": "#FF5722", "label": "Model Denials"}]
+                ],
+                "period": 60
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 26, "width": 12, "height": 6,
+              "properties": {
+                "title": "Request latency percentiles",
+                "view": "timeSeries",
+                "stacked": false,
+                "metrics": [
+                  ["Bifrost/Gateway", "LatencySeconds", {"stat": "p50", "period": 300, "color": "#4CAF50", "label": "p50"}],
+                  ["Bifrost/Gateway", "LatencySeconds", {"stat": "p95", "period": 300, "color": "#FF9800", "label": "p95"}],
+                  ["Bifrost/Gateway", "LatencySeconds", {"stat": "p99", "period": 300, "color": "#F44336", "label": "p99"}]
+                ],
+                "period": 300,
+                "yAxis": {"left": {"label": "Seconds", "showUnits": false}},
+                "annotations": {
+                  "horizontal": [{"value": 5, "color": "#FF9800", "label": "5s threshold"}]
+                }
+              }
+            },
+            {
+              "type": "alarm",
+              "x": 12, "y": 26, "width": 12, "height": 6,
+              "properties": {
+                "title": "Active Alarms",
+                "alarms": [
+                  "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${StackPrefix}-team-alpha-quota-80pct",
+                  "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${StackPrefix}-team-alpha-quota-100pct",
+                  "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${StackPrefix}-team-beta-quota-100pct",
+                  "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${StackPrefix}-high-error-rate",
+                  "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${StackPrefix}-high-latency"
+                ]
+              }
+            }
+          ]
+        }
+
+Outputs:
+  DashboardUrl:
+    Description: CloudWatch Dashboard URL
+    Value: !Sub 'https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${StackPrefix}-ai-gateway'
+
+  AlarmTopicArn:
+    Value: !Ref AlarmTopic
+    Export:
+      Name: !Sub '${StackPrefix}-AlarmTopicArn'

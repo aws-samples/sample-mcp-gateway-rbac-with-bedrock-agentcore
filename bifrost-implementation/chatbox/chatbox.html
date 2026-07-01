@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bifrost AI Gateway — Team Chat Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f0f2f5;
+      min-height: 100vh;
+      display: flex;
+    }
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 270px; background: #1a1a2e; color: #e0e0e0;
+      display: flex; flex-direction: column; height: 100vh;
+    }
+    .sidebar-header { padding: 20px 16px 12px; border-bottom: 1px solid #2d2d4e; }
+    .sidebar-brand {
+      font-size: 20px; font-weight: 700; color: #fff;
+      display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+    }
+    .sidebar-brand svg { width: 28px; height: 28px; }
+    .sidebar-subtitle { font-size: 11px; color: #8888aa; letter-spacing: 1px; text-transform: uppercase; }
+    .team-section { padding: 12px; border-bottom: 1px solid #2d2d4e; }
+    .team-section-label { font-size: 10px; color: #6666aa; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; padding: 0 4px; }
+    .team-btn {
+      width: 100%; padding: 10px 12px; border-radius: 8px; border: 2px solid transparent;
+      cursor: pointer; text-align: left; margin-bottom: 6px; transition: all 0.15s;
+      background: #2a2a4a; color: #c0c0d0; font-size: 14px;
+    }
+    .team-btn:hover { background: #3a3a5a; }
+    .team-btn.active { border-color: #6c63ff; background: #3a3a6a; color: #fff; }
+    .team-btn-name { font-weight: 600; }
+    .team-btn-desc { font-size: 11px; color: #8888aa; margin-top: 2px; }
+    .quota-bar-wrap { margin-top: 6px; }
+    .quota-label { font-size: 10px; color: #8888aa; display: flex; justify-content: space-between; }
+    .quota-bar { height: 4px; background: #3a3a5a; border-radius: 2px; margin-top: 4px; }
+    .quota-fill { height: 100%; border-radius: 2px; transition: width 0.5s; background: #6c63ff; }
+    .quota-fill.warn { background: #ff9800; }
+    .quota-fill.danger { background: #f44336; }
+    .stats-section { padding: 12px 16px; border-top: 1px solid #2d2d4e; font-size: 12px; }
+    .stat-row { display: flex; justify-content: space-between; margin-bottom: 6px; color: #8888aa; }
+    .stat-value { color: #e0e0e0; font-weight: 600; }
+    /* ── Main ── */
+    .main { flex: 1; display: flex; flex-direction: column; }
+    .topbar {
+      padding: 12px 20px; background: #fff; border-bottom: 1px solid #e0e4ea;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .model-pill {
+      padding: 6px 16px; border: 1px solid #d0d4dc; border-radius: 20px;
+      font-size: 13px; font-weight: 500; cursor: pointer; background: #fff;
+      display: flex; align-items: center; gap: 6px; position: relative;
+    }
+    .model-pill:hover { background: #f7f8fa; }
+    .model-dropdown {
+      display: none; position: absolute; top: calc(100% + 8px); left: 0;
+      background: #fff; border: 1px solid #e0e4ea; border-radius: 12px;
+      box-shadow: 0 4px 16px rgba(0,0,0,.12); min-width: 260px; z-index: 100;
+    }
+    .model-dropdown.open { display: block; }
+    .model-opt {
+      padding: 12px 16px; cursor: pointer; border-bottom: 1px solid #f5f5f5;
+    }
+    .model-opt:last-child { border-bottom: none; border-radius: 0 0 12px 12px; }
+    .model-opt:hover { background: #f7f8fa; }
+    .model-opt-name { font-weight: 600; font-size: 14px; }
+    .model-opt-desc { font-size: 12px; color: #8888aa; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-left: 6px; }
+    .badge.ok { background: #e8f5e9; color: #388e3c; }
+    .badge.deny { background: #fce4ec; color: #c62828; }
+    .status-chip {
+      display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8888aa;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #4caf50; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+    /* ── Messages ── */
+    .messages { flex: 1; overflow-y: auto; padding: 20px; }
+    .msg { display: flex; gap: 12px; margin-bottom: 20px; }
+    .avatar {
+      width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; color: #fff;
+    }
+    .msg-body { flex: 1; }
+    .msg-text { line-height: 1.6; font-size: 15px; color: #2d2d3a; }
+    .msg-meta { font-size: 11px; color: #aaa; margin-top: 4px; }
+    .msg.system .msg-text {
+      background: #fff8e1; border: 1px solid #ffe082; border-radius: 8px;
+      padding: 8px 12px; color: #5d4037; font-size: 14px;
+    }
+    .msg.error .msg-text {
+      background: #fce4ec; border: 1px solid #f48fb1; border-radius: 8px;
+      padding: 8px 12px; color: #c62828; font-size: 14px;
+    }
+    .typing { display: flex; gap: 4px; padding: 8px 0; }
+    .typing span {
+      width: 8px; height: 8px; background: #6c63ff; border-radius: 50%;
+      animation: bounce 1.3s infinite;
+    }
+    .typing span:nth-child(2) { animation-delay: .2s; }
+    .typing span:nth-child(3) { animation-delay: .4s; }
+    @keyframes bounce { 0%,60%,100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
+    /* ── Input ── */
+    .input-wrap { padding: 16px 20px; border-top: 1px solid #e0e4ea; background: #fff; }
+    .input-row {
+      display: flex; align-items: flex-end; gap: 10px;
+      background: #f7f8fa; border: 1px solid #d8dce4; border-radius: 16px; padding: 10px 14px;
+      transition: border-color .2s;
+    }
+    .input-row:focus-within { border-color: #6c63ff; }
+    textarea {
+      flex: 1; border: none; background: transparent; resize: none;
+      font-size: 15px; font-family: inherit; outline: none; max-height: 160px;
+    }
+    .send-btn {
+      width: 36px; height: 36px; border-radius: 50%; border: none;
+      background: #6c63ff; color: #fff; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+      transition: background .15s;
+    }
+    .send-btn:hover:not(:disabled) { background: #574fd6; }
+    .send-btn:disabled { background: #ccc; cursor: not-allowed; }
+    /* ── Welcome ── */
+    .welcome {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 100%; text-align: center; padding: 40px;
+    }
+    .welcome h2 { font-size: 24px; color: #2d2d3a; margin-bottom: 8px; }
+    .welcome p { color: #888; font-size: 15px; max-width: 400px; }
+    .welcome-logo { font-size: 48px; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+<!-- ── Sidebar ─────────────────────────────────────────── -->
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <div class="sidebar-brand">
+      <svg viewBox="0 0 32 32" fill="none">
+        <circle cx="16" cy="16" r="16" fill="#6c63ff"/>
+        <path d="M8 16 L16 8 L24 16 L16 24 Z" fill="white" opacity=".9"/>
+        <circle cx="16" cy="16" r="3" fill="#6c63ff"/>
+      </svg>
+      Bifrost Gateway
+    </div>
+    <div class="sidebar-subtitle">AI Access Control Demo</div>
+  </div>
+
+  <div class="team-section">
+    <div class="team-section-label">Select Team</div>
+    <button class="team-btn" id="btn-alpha" onclick="selectTeam('team-alpha')">
+      <div class="team-btn-name">🏢 Team Alpha</div>
+      <div class="team-btn-desc">Haiku 4.5 + Sonnet 4.5 access</div>
+      <div class="quota-bar-wrap">
+        <div class="quota-label">
+          <span>Daily quota</span>
+          <span id="alpha-pct">0%</span>
+        </div>
+        <div class="quota-bar"><div class="quota-fill" id="alpha-bar" style="width:0%"></div></div>
+      </div>
+    </button>
+    <button class="team-btn" id="btn-beta" onclick="selectTeam('team-beta')">
+      <div class="team-btn-name">🏪 Team Beta</div>
+      <div class="team-btn-desc">Haiku 4.5 only (cost-optimised)</div>
+      <div class="quota-bar-wrap">
+        <div class="quota-label">
+          <span>Daily quota</span>
+          <span id="beta-pct">0%</span>
+        </div>
+        <div class="quota-bar"><div class="quota-fill" id="beta-bar" style="width:0%"></div></div>
+      </div>
+    </button>
+  </div>
+
+  <div style="flex:1"></div>
+
+  <div class="stats-section">
+    <div class="stat-row"><span>Requests this session</span><span class="stat-value" id="stat-req">0</span></div>
+    <div class="stat-row"><span>Input tokens</span><span class="stat-value" id="stat-in">0</span></div>
+    <div class="stat-row"><span>Output tokens</span><span class="stat-value" id="stat-out">0</span></div>
+    <div class="stat-row"><span>Est. cost</span><span class="stat-value" id="stat-cost">$0.0000</span></div>
+  </div>
+</aside>
+
+<!-- ── Main ─────────────────────────────────────────────── -->
+<main class="main">
+  <div class="topbar">
+    <div class="model-pill" onclick="toggleModelMenu(event)">
+      <span id="model-label">Select a model</span>
+      <span>▼</span>
+      <div class="model-dropdown" id="model-menu">
+        <div class="model-opt" onclick="pickModel('us.anthropic.claude-haiku-4-5-20251001-v1:0','Claude Haiku 4.5',event)">
+          <div class="model-opt-name">Claude Haiku 4.5 <span class="badge ok" id="b-haiku">✓ Allowed</span></div>
+          <div class="model-opt-desc">Fast and cost-efficient</div>
+        </div>
+        <div class="model-opt" onclick="pickModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0','Claude Sonnet 4.5',event)">
+          <div class="model-opt-name">Claude Sonnet 4.5 <span class="badge ok" id="b-sonnet">✓ Allowed</span></div>
+          <div class="model-opt-desc">Balanced performance</div>
+        </div>
+        <div class="model-opt" onclick="pickModel('us.anthropic.claude-opus-4-1-20250805-v1:0','Claude Opus 4.1',event)">
+          <div class="model-opt-name">Claude Opus 4.1 <span class="badge deny" id="b-opus">✗ Denied</span></div>
+          <div class="model-opt-desc">Most capable (restricted)</div>
+        </div>
+      </div>
+    </div>
+    <div class="status-chip"><div class="dot"></div><span id="status-text">Select a team to start</span></div>
+  </div>
+
+  <div class="messages" id="msgs">
+    <div class="welcome" id="welcome">
+      <div class="welcome-logo">⚡</div>
+      <h2>Bifrost AI Gateway</h2>
+      <p>Select a team from the sidebar to experience team-based model access control, quota enforcement, and real-time CloudWatch observability.</p>
+    </div>
+  </div>
+
+  <div class="input-wrap">
+    <div class="input-row">
+      <textarea id="input" rows="1" placeholder="Type a message…" disabled
+        onkeydown="onKey(event)" oninput="autoResize(this)"></textarea>
+      <button class="send-btn" id="send-btn" onclick="send()" disabled>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+</main>
+
+<script>
+// ─────────────────────────────────────────────────────────────────
+// Configuration — patched by deploy-bifrost.sh
+// ─────────────────────────────────────────────────────────────────
+// ✅ Auto-configured by deploy-bifrost.sh — do not edit manually
+const API_ENDPOINT = "BIFROST_API_ENDPOINT_PLACEHOLDER";
+
+// Virtual keys issued by Bifrost admin UI
+const TEAM_VIRTUAL_KEYS = {
+  'team-alpha': 'BIFROST_ALPHA_VIRTUAL_KEY_PLACEHOLDER',
+  'team-beta':  'BIFROST_BETA_VIRTUAL_KEY_PLACEHOLDER',
+};
+
+// Per-team model allowlists (mirrors Bifrost virtual key config)
+const TEAM_MODELS = {
+  'team-alpha': [
+    'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+  ],
+  'team-beta': [
+    'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+  ],
+};
+
+const MODEL_PRICING = {
+  'us.anthropic.claude-haiku-4-5-20251001-v1:0':  { in: 0.0000008,  out: 0.000004 },
+  'us.anthropic.claude-sonnet-4-5-20250929-v1:0': { in: 0.000003,   out: 0.000015 },
+  'us.anthropic.claude-opus-4-1-20250805-v1:0':   { in: 0.000015,   out: 0.000075 },
+};
+
+const TEAM_DAILY_LIMITS = { 'team-alpha': 100000, 'team-beta': 50000 };
+const TEAM_COLORS       = { 'team-alpha': '#6c63ff', 'team-beta': '#ff9800' };
+
+// ─────────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────────
+let currentTeam  = null;
+let currentModel = null;
+let sessionStats = { requests: 0, inTokens: 0, outTokens: 0, cost: 0 };
+let quotaState   = { 'team-alpha': 0, 'team-beta': 0 };
+
+// ─────────────────────────────────────────────────────────────────
+// Team selection
+// ─────────────────────────────────────────────────────────────────
+function selectTeam(team) {
+  currentTeam  = team;
+  currentModel = TEAM_MODELS[team][0]; // default to first allowed model
+
+  document.getElementById('btn-alpha').classList.toggle('active', team === 'team-alpha');
+  document.getElementById('btn-beta').classList.toggle('active',  team === 'team-beta');
+  document.getElementById('status-text').textContent = team + ' connected';
+  document.getElementById('model-label').textContent  = modelName(currentModel);
+
+  document.getElementById('input').disabled    = false;
+  document.getElementById('send-btn').disabled = false;
+  document.getElementById('welcome').style.display = 'none';
+
+  updateModelBadges();
+  sessionStats = { requests: 0, inTokens: 0, outTokens: 0, cost: 0 };
+  updateStats();
+
+  addMsg('system', `Signed in as <strong>${team}</strong>. Allowed models: ${TEAM_MODELS[team].map(modelName).join(', ')}.`);
+}
+
+function modelName(id) {
+  const map = {
+    'us.anthropic.claude-haiku-4-5-20251001-v1:0':  'Claude Haiku 4.5',
+    'us.anthropic.claude-sonnet-4-5-20250929-v1:0': 'Claude Sonnet 4.5',
+    'us.anthropic.claude-opus-4-1-20250805-v1:0':   'Claude Opus 4.1',
+  };
+  return map[id] || id;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Model selection
+// ─────────────────────────────────────────────────────────────────
+function toggleModelMenu(e) {
+  e.stopPropagation();
+  document.getElementById('model-menu').classList.toggle('open');
+}
+
+function pickModel(id, name, e) {
+  e.stopPropagation();
+  if (!currentTeam) { addMsg('system', 'Select a team first.'); return; }
+  currentModel = id;
+  document.getElementById('model-label').textContent = name;
+  document.getElementById('model-menu').classList.remove('open');
+  const allowed = TEAM_MODELS[currentTeam].includes(id);
+  addMsg('system', allowed
+    ? `Model set to <strong>${name}</strong> ✓ allowed for ${currentTeam}.`
+    : `⚠️ <strong>${name}</strong> is not in ${currentTeam}'s allowlist. The gateway will return 403.`);
+}
+
+function updateModelBadges() {
+  if (!currentTeam) return;
+  const allowed = TEAM_MODELS[currentTeam];
+  [
+    ['b-haiku',  'us.anthropic.claude-haiku-4-5-20251001-v1:0'],
+    ['b-sonnet', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'],
+    ['b-opus',   'us.anthropic.claude-opus-4-1-20250805-v1:0'],
+  ].forEach(([id, mid]) => {
+    const el = document.getElementById(id);
+    if (allowed.includes(mid)) {
+      el.className = 'badge ok'; el.textContent = '✓ Allowed';
+    } else {
+      el.className = 'badge deny'; el.textContent = '✗ Denied';
+    }
+  });
+}
+
+document.addEventListener('click', () => document.getElementById('model-menu').classList.remove('open'));
+
+// ─────────────────────────────────────────────────────────────────
+// Send message — calls Bifrost OpenAI-compatible endpoint
+// ─────────────────────────────────────────────────────────────────
+async function send() {
+  if (!currentTeam || !currentModel) return;
+  const ta  = document.getElementById('input');
+  const txt = ta.value.trim();
+  if (!txt) return;
+
+  ta.value = ''; ta.style.height = 'auto';
+  addMsg('user', escapeHtml(txt));
+  showTyping();
+
+  const t0 = Date.now();
+  try {
+    const resp = await fetch(API_ENDPOINT + '/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // Bifrost virtual key in Authorization header (OpenAI-compatible)
+        'Authorization': `Bearer ${TEAM_VIRTUAL_KEYS[currentTeam]}`,
+        // Pass team as custom header for Bifrost governance + CloudWatch dimensions
+        'X-Team-Id': currentTeam,
+      },
+      body: JSON.stringify({
+        model: currentModel,
+        messages: [{ role: 'user', content: txt }],
+        max_tokens: 500,
+        stream: false,
+      }),
+    });
+
+    removeTyping();
+    const latencyMs = Date.now() - t0;
+
+    if (resp.status === 403 || resp.status === 429) {
+      const body = await resp.json().catch(() => ({}));
+      const reason = body.error?.message || (resp.status === 429 ? 'Daily token quota exceeded' : 'Model access denied by gateway policy');
+      addMsg('error', `🚫 <strong>${resp.status}</strong>: ${escapeHtml(reason)}`);
+      // Trigger quota refresh to show updated bar
+      setTimeout(refreshQuota, 2000);
+      return;
+    }
+
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      addMsg('error', `❌ HTTP ${resp.status}: ${escapeHtml(body.slice(0, 200))}`);
+      return;
+    }
+
+    const data  = await resp.json();
+    const reply = data.choices?.[0]?.message?.content ?? '(empty response)';
+    const usage = data.usage ?? {};
+    const inTok = usage.prompt_tokens ?? 0;
+    const outTok= usage.completion_tokens ?? 0;
+    const price = MODEL_PRICING[currentModel] ?? { in: 0, out: 0 };
+    const cost  = inTok * price.in + outTok * price.out;
+
+    sessionStats.requests++;
+    sessionStats.inTokens  += inTok;
+    sessionStats.outTokens += outTok;
+    sessionStats.cost      += cost;
+    updateStats();
+
+    const meta = `⏱ ${latencyMs}ms · 📥 ${inTok} · 📤 ${outTok} · 💰 $${cost.toFixed(6)}`;
+    addMsg('assistant', escapeHtml(reply), meta);
+
+    // Update quota bar from session running total
+    const limit = TEAM_DAILY_LIMITS[currentTeam] ?? 100000;
+    quotaState[currentTeam] = (quotaState[currentTeam] ?? 0) + inTok + outTok;
+    updateQuotaBar(currentTeam, quotaState[currentTeam], limit);
+
+  } catch (err) {
+    removeTyping();
+    addMsg('error', `❌ Network error: ${escapeHtml(err.message)}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Quota bars
+// ─────────────────────────────────────────────────────────────────
+function updateQuotaBar(team, used, limit) {
+  const pct = Math.min(100, Math.round(used / limit * 100));
+  const barEl = document.getElementById(team === 'team-alpha' ? 'alpha-bar' : 'beta-bar');
+  const pctEl = document.getElementById(team === 'team-alpha' ? 'alpha-pct' : 'beta-pct');
+  barEl.style.width = pct + '%';
+  pctEl.textContent = pct + '%';
+  barEl.className = 'quota-fill' + (pct >= 100 ? ' danger' : pct >= 80 ? ' warn' : '');
+}
+
+async function refreshQuota() {
+  // In production, this would call a /quota API endpoint.
+  // For the demo, we rely on the running session counters updated after each request.
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Stats
+// ─────────────────────────────────────────────────────────────────
+function updateStats() {
+  document.getElementById('stat-req').textContent  = sessionStats.requests;
+  document.getElementById('stat-in').textContent   = sessionStats.inTokens.toLocaleString();
+  document.getElementById('stat-out').textContent  = sessionStats.outTokens.toLocaleString();
+  document.getElementById('stat-cost').textContent = '$' + sessionStats.cost.toFixed(4);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Message rendering
+// ─────────────────────────────────────────────────────────────────
+function addMsg(role, html, meta) {
+  const msgs = document.getElementById('msgs');
+  const div  = document.createElement('div');
+  div.className = 'msg ' + role;
+
+  let avatarColor = '#6c63ff';
+  let avatarLabel = 'AI';
+  if (role === 'user')   { avatarColor = TEAM_COLORS[currentTeam] ?? '#6c63ff'; avatarLabel = currentTeam === 'team-alpha' ? 'A' : 'B'; }
+  if (role === 'system') { avatarColor = '#78909c'; avatarLabel = '⚙'; }
+  if (role === 'error')  { avatarColor = '#e53935'; avatarLabel = '!'; }
+
+  div.innerHTML = `
+    <div class="avatar" style="background:${avatarColor}">${avatarLabel}</div>
+    <div class="msg-body">
+      <div class="msg-text">${html}</div>
+      ${meta ? `<div class="msg-meta">${meta}</div>` : ''}
+    </div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function showTyping() {
+  const msgs = document.getElementById('msgs');
+  const div  = document.createElement('div');
+  div.id = 'typing'; div.className = 'msg assistant';
+  div.innerHTML = `
+    <div class="avatar" style="background:#6c63ff">AI</div>
+    <div class="msg-body"><div class="typing"><span></span><span></span><span></span></div></div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function removeTyping() {
+  document.getElementById('typing')?.remove();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function onKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+}
+</script>
+</body>
+</html>
