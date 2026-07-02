@@ -157,9 +157,17 @@ deploy_stack "${STACK_BASE}-vpc" "$CFN_DIR/01-vpc.yaml" \
 
 hr
 log "Step 2/4: ECS Fargate + ALB + EFS"
+# Upload ADOT config to S3
+log "Uploading ADOT collector config to S3..."
+aws s3 cp "$ROOT_DIR/otel/collector-config.yaml" \
+  "s3://${BUCKET}/config/adot-collector.yaml" \
+  --region "$REGION" > /dev/null
+ok "Uploaded adot-collector.yaml"
+
 deploy_stack "${STACK_BASE}-ecs" "$CFN_DIR/02-ecs.yaml" \
   "ParameterKey=StackPrefix,ParameterValue=${PREFIX}" \
-  "ParameterKey=BifrostEncryptionKey,ParameterValue=${ENCRYPTION_KEY}"
+  "ParameterKey=BifrostEncryptionKey,ParameterValue=${ENCRYPTION_KEY}" \
+  "ParameterKey=S3ArtifactBucket,ParameterValue=${BUCKET}"
 
 ALB_DNS=$(get_output "${STACK_BASE}-ecs" "AlbDnsName")
 ok "ALB (internal): $ALB_DNS"

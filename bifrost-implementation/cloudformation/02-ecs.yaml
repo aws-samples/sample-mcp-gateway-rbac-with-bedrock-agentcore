@@ -3,6 +3,8 @@ Description: |
   Bifrost AI Gateway - ECS Fargate cluster, task definition, and service.
   Two containers per task: Bifrost gateway + ADOT collector sidecar.
   Config persisted on EFS. IAM role grants Bedrock + CloudWatch access.
+  ADOT config is passed as a literal environment variable (no SSM, no !Sub)
+  to avoid CloudFormation substitution issues with YAML-in-YAML.
 
 Parameters:
   StackPrefix:
@@ -19,6 +21,10 @@ Parameters:
     Default: public.ecr.aws/aws-observability/aws-otel-collector:latest
     Description: AWS Distro for OpenTelemetry collector image
 
+  S3ArtifactBucket:
+    Type: String
+    Description: S3 bucket containing Lambda artifacts
+
   TaskCpu:
     Type: Number
     Default: 1024
@@ -26,8 +32,8 @@ Parameters:
 
   TaskMemory:
     Type: Number
-    Default: 2048
-    AllowedValues: [512, 1024, 2048, 4096, 8192]
+    Default: 3072
+    AllowedValues: [512, 1024, 2048, 3072, 4096, 8192]
 
   DesiredCount:
     Type: Number
@@ -50,6 +56,9 @@ Parameters:
     NoEcho: true
     Description: 32-byte encryption key for Bifrost config store
     Default: ''
+
+Conditions:
+  HasEncryptionKey: !Not [!Equals [!Ref BifrostEncryptionKey, '']]
 
 Resources:
 
@@ -102,28 +111,28 @@ Resources:
   BifrostLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '/bifrost/container'
+      LogGroupName: /bifrost/container
       RetentionInDays: 30
 
   AdotLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '/bifrost/adot-collector'
+      LogGroupName: /bifrost/adot-collector
       RetentionInDays: 7
 
   BifrostAccessLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '/bifrost/access'
+      LogGroupName: /bifrost/access
       RetentionInDays: 90
 
   BifrostAuditLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '/bifrost/audit'
+      LogGroupName: /bifrost/audit
       RetentionInDays: 365
 
-  # ── SSM Parameters for runtime config ────────────────────────────
+  # ── SSM Parameter – encryption key only ──────────────────────────
   EncryptionKeyParam:
     Type: AWS::SSM::Parameter
     Properties:
@@ -135,7 +144,7 @@ Resources:
         - 'bifrost-default-key-32byteslong!!'
       Description: Bifrost config store encryption key
 
-  # ── IAM Roles ─────────────────────────────────────────────────────
+  # ── IAM – Execution Role ──────────────────────────────────────────
   EcsTaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -160,6 +169,7 @@ Resources:
                   - ssm:GetParameters
                 Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${StackPrefix}/*'
 
+  # ── IAM – Task Role ───────────────────────────────────────────────
   EcsTaskRole:
     Type: AWS::IAM::Role
     Properties:
@@ -210,6 +220,14 @@ Resources:
                   - xray:GetSamplingTargets
                   - xray:GetSamplingStatisticSummaries
                 Resource: '*'
+        - PolicyName: S3ConfigRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub 'arn:aws:s3:::${S3ArtifactBucket}/*'
         - PolicyName: EfsAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -220,129 +238,6 @@ Resources:
                   - elasticfilesystem:ClientWrite
                   - elasticfilesystem:DescribeMountTargets
                 Resource: !GetAtt BifrostEfs.Arn
-
-  # ── ADOT Collector config stored in SSM ───────────────────────────
-  AdotConfigParam:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: !Sub '/${StackPrefix}/adot-config'
-      Type: String
-      Value: !Sub |
-        extensions:
-          health_check:
-            endpoint: 0.0.0.0:13133
-
-        receivers:
-          prometheus:
-            config:
-              scrape_configs:
-                - job_name: 'bifrost'
-                  scrape_interval: 15s
-                  static_configs:
-                    - targets: ['localhost:8080']
-                  metrics_path: '/metrics'
-                  relabel_configs:
-                    - source_labels: [__name__]
-                      regex: 'go_.*'
-                      action: drop
-
-          otlp:
-            protocols:
-              grpc:
-                endpoint: 0.0.0.0:4317
-              http:
-                endpoint: 0.0.0.0:4318
-
-        processors:
-          resource_detection:
-            detectors: [env, ecs, ec2]
-            timeout: 5s
-            override: false
-
-          attributes/bifrost:
-            actions:
-              - key: service.name
-                value: bifrost-gateway
-                action: upsert
-              - key: deployment.environment
-                value: production
-                action: upsert
-
-          # Rename Bifrost Prometheus labels to CloudWatch dimension names
-          metricstransform/dimensions:
-            transforms:
-              - include: bifrost_.*
-                match_type: regexp
-                action: update
-                operations:
-                  - action: update_label
-                    label: virtual_key
-                    new_label: team
-                  - action: update_label
-                    label: provider
-                    new_label: llm_provider
-                  - action: update_label
-                    label: model
-                    new_label: model
-
-          filter/relevant:
-            metrics:
-              include:
-                match_type: regexp
-                metric_names:
-                  - bifrost_.*
-                  - process_.*
-                  - go_memstats_.*
-
-          batch:
-            send_batch_size: 50
-            timeout: 10s
-
-        exporters:
-          awsemf:
-            namespace: Bifrost/Gateway
-            region: ${AWS::Region}
-            log_group_name: /bifrost/metrics
-            log_stream_name: bifrost-gateway
-            dimension_rollup_option: NoDimensionRollup
-            metric_declarations:
-              - dimensions:
-                  - [team, model]
-                  - [team]
-                  - [model]
-                metric_name_selectors:
-                  - bifrost_requests_total
-                  - bifrost_tokens_input_total
-                  - bifrost_tokens_output_total
-                  - bifrost_request_duration_seconds.*
-                  - bifrost_errors_total
-              - dimensions:
-                  - [team]
-                metric_name_selectors:
-                  - bifrost_virtual_key_budget_used.*
-                  - bifrost_virtual_key_requests_total
-
-          awsxray:
-            region: ${AWS::Region}
-            indexed_attributes:
-              - team
-              - model
-              - llm_provider
-
-          logging:
-            loglevel: warn
-
-        service:
-          extensions: [health_check]
-          pipelines:
-            metrics:
-              receivers: [prometheus, otlp]
-              processors: [resource_detection, attributes/bifrost, metricstransform/dimensions, filter/relevant, batch]
-              exporters: [awsemf]
-            traces:
-              receivers: [otlp]
-              processors: [resource_detection, attributes/bifrost, batch]
-              exporters: [awsxray]
 
   # ── ECS Cluster ───────────────────────────────────────────────────
   EcsCluster:
@@ -385,20 +280,14 @@ Resources:
               IAM: ENABLED
 
       ContainerDefinitions:
-        # ── Bifrost container ───────────────────────────────────────
+
+        # ── Bifrost container ──────────────────────────────────────
         - Name: bifrost
           Image: !Ref BifrostImage
           Essential: true
           PortMappings:
             - ContainerPort: 8080
               Protocol: tcp
-          Command:
-            - '-host'
-            - '0.0.0.0'
-            - '-port'
-            - '8080'
-            - '-app-dir'
-            - '/app/data'
           Environment:
             - Name: BIFROST_HOST
               Value: '0.0.0.0'
@@ -414,7 +303,6 @@ Resources:
               Value: !Sub '${DailyTokenLimitBeta}'
             - Name: MONTHLY_TOKEN_LIMIT
               Value: !Sub '${MonthlyTokenLimit}'
-            # OTEL endpoint — sidecar on localhost
             - Name: OTEL_EXPORTER_OTLP_ENDPOINT
               Value: 'http://localhost:4318'
             - Name: OTEL_SERVICE_NAME
@@ -426,26 +314,30 @@ Resources:
             - SourceVolume: bifrost-data
               ContainerPath: /app/data
               ReadOnly: false
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - 'wget -qO- http://localhost:8080/health || exit 1'
+            Interval: 30
+            Timeout: 10
+            Retries: 3
+            StartPeriod: 120
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref BifrostLogGroup
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: bifrost
-          HealthCheck:
-            Command:
-              - CMD-SHELL
-              - 'wget -qO- http://localhost:8080/health || exit 1'
-            Interval: 30
-            Timeout: 5
-            Retries: 3
-            StartPeriod: 60
           Ulimits:
             - Name: nofile
               SoftLimit: 65536
               HardLimit: 65536
 
-        # ── ADOT Collector sidecar ──────────────────────────────────
+        # ── ADOT Collector sidecar ─────────────────────────────────
+        # ADOT_CONFIG is a plain string literal – no !Sub – so CloudFormation
+        # will NOT attempt variable substitution inside the OTEL YAML.
+        # Region is hardcoded as us-east-1 to avoid ${AWS::Region} clashing
+        # with OTEL's own ${} syntax.
         - Name: adot-collector
           Image: !Ref AdotImage
           Essential: false
@@ -454,10 +346,9 @@ Resources:
             - 'env:ADOT_CONFIG'
           Environment:
             - Name: AWS_REGION
-              Value: !Ref AWS::Region
-          Secrets:
+              Value: us-east-1
             - Name: ADOT_CONFIG
-              ValueFrom: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${StackPrefix}/adot-config'
+              Value: "extensions:\n  health_check:\n    endpoint: 0.0.0.0:13133\n\nreceivers:\n  prometheus:\n    config:\n      scrape_configs:\n        - job_name: bifrost\n          scrape_interval: 15s\n          metrics_path: /metrics\n          static_configs:\n            - targets:\n                - localhost:8080\n          relabel_configs:\n            - source_labels: [__name__]\n              regex: go_.*\n              action: drop\n  otlp:\n    protocols:\n      grpc:\n        endpoint: 0.0.0.0:4317\n      http:\n        endpoint: 0.0.0.0:4318\n\nprocessors:\n  resource_detection:\n    detectors: [env, ecs, ec2]\n    timeout: 5s\n    override: false\n  attributes/bifrost:\n    actions:\n      - key: service.name\n        value: bifrost-gateway\n        action: upsert\n      - key: deployment.environment\n        value: production\n        action: upsert\n  metricstransform/dimensions:\n    transforms:\n      - include: bifrost_.*\n        match_type: regexp\n        action: update\n        operations:\n          - action: update_label\n            label: virtual_key\n            new_label: team\n          - action: update_label\n            label: provider\n            new_label: llm_provider\n          - action: update_label\n            label: model\n            new_label: model\n  filter/relevant:\n    metrics:\n      include:\n        match_type: regexp\n        metric_names:\n          - bifrost_.*\n          - process_.*\n          - go_memstats_.*\n  batch:\n    send_batch_size: 50\n    timeout: 10s\n\nexporters:\n  awsemf:\n    namespace: Bifrost/Gateway\n    region: us-east-1\n    log_group_name: /bifrost/metrics\n    log_stream_name: bifrost-gateway\n    dimension_rollup_option: NoDimensionRollup\n    metric_declarations:\n      - dimensions:\n          - [team, model]\n          - [team]\n          - [model]\n        metric_name_selectors:\n          - bifrost_requests_total\n          - bifrost_tokens_input_total\n          - bifrost_tokens_output_total\n          - bifrost_request_duration_seconds.*\n          - bifrost_errors_total\n      - dimensions:\n          - [team]\n        metric_name_selectors:\n          - bifrost_virtual_key_budget_used.*\n          - bifrost_virtual_key_requests_total\n  awsxray:\n    region: us-east-1\n    indexed_attributes:\n      - team\n      - model\n      - llm_provider\n  logging:\n    loglevel: warn\n\nservice:\n  extensions: [health_check]\n  pipelines:\n    metrics:\n      receivers: [prometheus, otlp]\n      processors: [resource_detection, attributes/bifrost, metricstransform/dimensions, filter/relevant, batch]\n      exporters: [awsemf]\n    traces:\n      receivers: [otlp]\n      processors: [resource_detection, attributes/bifrost, batch]\n      exporters: [awsxray]\n"
           PortMappings:
             - ContainerPort: 4317
               Protocol: tcp
@@ -475,7 +366,7 @@ Resources:
             - ContainerName: bifrost
               Condition: START
 
-  # ── ALB ───────────────────────────────────────────────────────────
+  # ── Internal ALB ──────────────────────────────────────────────────
   Alb:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
@@ -516,7 +407,7 @@ Resources:
         - Key: stickiness.enabled
           Value: 'true'
         - Key: stickiness.type
-          Value: 'lb_cookie'
+          Value: lb_cookie
         - Key: stickiness.lb_cookie.duration_seconds
           Value: '86400'
 
@@ -562,9 +453,6 @@ Resources:
         DeploymentCircuitBreaker:
           Enable: true
           Rollback: true
-
-Conditions:
-  HasEncryptionKey: !Not [!Equals [!Ref BifrostEncryptionKey, '']]
 
 Outputs:
   AlbArn:

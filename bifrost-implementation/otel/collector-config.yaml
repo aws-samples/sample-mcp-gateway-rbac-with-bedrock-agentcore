@@ -1,0 +1,65 @@
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'bifrost'
+          scrape_interval: 15s
+          static_configs:
+            - targets: ['localhost:8080']
+          metrics_path: '/metrics'
+          relabel_configs:
+            - source_labels: [__name__]
+              regex: 'go_gc_.*|go_goroutines|go_threads'
+              action: drop
+
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  resource_detection:
+    detectors: [env, ecs]
+    timeout: 5s
+    override: false
+
+  attributes/team:
+    actions:
+      - key: service.name
+        value: bifrost-gateway
+        action: upsert
+
+  batch:
+    send_batch_size: 50
+    timeout: 10s
+
+exporters:
+  awsemf:
+    namespace: Bifrost/Gateway
+    log_group_name: /bifrost/metrics
+    log_stream_name: bifrost-gateway
+    dimension_rollup_option: NoDimensionRollup
+    metric_declarations:
+      - dimensions:
+          - [team, model]
+          - [team]
+          - []
+        metric_name_selectors:
+          - ".*"
+
+  logging:
+    loglevel: warn
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics:
+      receivers: [prometheus, otlp]
+      processors: [resource_detection, attributes/team, batch]
+      exporters: [awsemf]

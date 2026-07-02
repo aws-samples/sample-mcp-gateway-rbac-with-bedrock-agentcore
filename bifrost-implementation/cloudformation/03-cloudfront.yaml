@@ -47,6 +47,7 @@ Resources:
 
   ChatboxBucketPolicy:
     Type: AWS::S3::BucketPolicy
+    DependsOn: CloudFrontDistribution
     Properties:
       Bucket: !Ref ChatboxBucket
       PolicyDocument:
@@ -60,7 +61,7 @@ Resources:
             Resource: !Sub '${ChatboxBucket.Arn}/*'
             Condition:
               StringEquals:
-                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+                AWS:SourceAccount: !Ref AWS::AccountId
 
   # Origin Access Control for S3
   S3OAC:
@@ -114,6 +115,8 @@ Resources:
       UserPoolId: !Ref AdminUserPool
 
   # CloudFront needs a Cognito App Client with the distribution URL as callback
+  # NOTE: CallbackURLs use a placeholder that gets updated post-deploy via CLI
+  # to break the circular dependency between CloudFrontDistribution and this client.
   AdminUserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
@@ -129,11 +132,12 @@ Resources:
       AllowedOAuthFlowsUserPoolClient: true
       SupportedIdentityProviders:
         - COGNITO
+      # Placeholder callbacks - updated by deploy script after CloudFront domain is known
       CallbackURLs:
-        - !Sub 'https://${CloudFrontDistribution.DomainName}/ui'
-        - !Sub 'https://${CloudFrontDistribution.DomainName}/ui/'
+        - 'https://placeholder.cloudfront.net/ui'
+        - 'https://placeholder.cloudfront.net/ui/'
       LogoutURLs:
-        - !Sub 'https://${CloudFrontDistribution.DomainName}/ui'
+        - 'https://placeholder.cloudfront.net/ui'
       ExplicitAuthFlows:
         - ALLOW_USER_SRP_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
@@ -280,28 +284,20 @@ Resources:
 
   # ── CloudFront Functions ──────────────────────────────────────────
 
-  # Cognito auth check for /ui/* — redirects to Cognito hosted UI if not authenticated
   CognitoAuthFunction:
     Type: AWS::CloudFront::Function
     Properties:
       Name: !Sub '${StackPrefix}-cognito-auth'
+      AutoPublish: true
       FunctionConfig:
         Comment: Redirect unauthenticated users to Cognito hosted UI
         Runtime: cloudfront-js-2.0
       FunctionCode: !Sub |
-        import cf from 'cloudfront';
-
-        const COGNITO_DOMAIN = 'https://${StackPrefix}-admin-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com';
-        const CLIENT_ID = '${AdminUserPoolClient}';
-        const REDIRECT_URI_PARAM = encodeURIComponent('/ui');
-
         function handler(event) {
           var request = event.request;
           var cookies = request.cookies;
-
-          // Check for Cognito session cookie (set after successful login)
-          // The cookie name matches the Cognito hosted UI session cookie pattern
           var isAuthenticated = false;
+
           for (var key in cookies) {
             if (key.indexOf('CognitoIdentityServiceProvider') === 0 ||
                 key.indexOf('cognito') === 0) {
@@ -309,20 +305,13 @@ Resources:
               break;
             }
           }
-
-          // Also check for Authorization header (API clients)
           if (request.headers && request.headers.authorization) {
             isAuthenticated = true;
           }
 
           if (!isAuthenticated) {
-            // Build Cognito hosted UI login URL
-            var loginUrl = COGNITO_DOMAIN +
-              '/login?client_id=' + CLIENT_ID +
-              '&response_type=code' +
-              '&scope=openid+email+profile' +
-              '&redirect_uri=' + REDIRECT_URI_PARAM;
-
+            var cognitoDomain = 'https://${StackPrefix}-admin-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com';
+            var loginUrl = cognitoDomain + '/login?client_id=CLIENT_ID_PLACEHOLDER&response_type=code&scope=openid+email+profile&redirect_uri=https%3A%2F%2FDOMAIN_PLACEHOLDER%2Fui';
             return {
               statusCode: 302,
               statusDescription: 'Found',
@@ -332,7 +321,6 @@ Resources:
               }
             };
           }
-
           return request;
         }
 
@@ -341,6 +329,7 @@ Resources:
     Type: AWS::CloudFront::Function
     Properties:
       Name: !Sub '${StackPrefix}-block-metrics'
+      AutoPublish: true
       FunctionConfig:
         Comment: Block direct access to Prometheus metrics endpoint
         Runtime: cloudfront-js-2.0
