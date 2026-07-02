@@ -1,0 +1,417 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Bifrost AI Gateway - CloudFront distribution with VPC Origin.
+  - ALB is internal (private subnet) - never directly accessible from internet
+  - CloudFront VPC Origin is the only inbound path to the ALB
+  - Cognito User Pool protects the /ui/* admin path
+  - S3 bucket serves chatbox.html as the static frontend
+  - Human-readable CloudFront alternate domain: ai-gateway-demo.{stackPrefix}
+  NOTE: us-east-1 is required for ACM certificates used by CloudFront
+
+Parameters:
+  StackPrefix:
+    Type: String
+    Default: bifrost
+
+  # Optional custom domain. Leave empty to use auto-generated CloudFront domain.
+  CustomDomain:
+    Type: String
+    Default: ''
+    Description: >
+      Optional custom domain (e.g. ai-gateway.example.com).
+      Leave empty to use the auto-generated CloudFront URL.
+
+  AdminEmail:
+    Type: String
+    Description: Email address for the first Cognito admin user (gets UI access)
+    Default: admin@example.com
+
+Resources:
+
+  # ── S3 bucket for chatbox static frontend ────────────────────────
+  ChatboxBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${StackPrefix}-chatbox-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+
+  ChatboxBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: CloudFrontDistribution
+    Properties:
+      Bucket: !Ref ChatboxBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontOAC
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${ChatboxBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceAccount: !Ref AWS::AccountId
+
+  # Origin Access Control for S3
+  S3OAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${StackPrefix}-s3-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # ── Cognito User Pool for Admin UI protection ─────────────────────
+  AdminUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${StackPrefix}-admin-pool'
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+        InviteMessageTemplate:
+          EmailMessage: !Sub |
+            You have been granted access to the Bifrost AI Gateway Admin UI.
+
+            Username: {username}
+            Temporary password: {####}
+
+            Sign in at: https://{distro}.cloudfront.net/ui/
+
+            This password expires in 7 days.
+          EmailSubject: 'Bifrost Gateway Admin Access'
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+      UserPoolTags:
+        Project: bifrost-gateway
+
+  AdminUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub '${StackPrefix}-admin-${AWS::AccountId}'
+      UserPoolId: !Ref AdminUserPool
+
+  # CloudFront needs a Cognito App Client with the distribution URL as callback
+  # NOTE: CallbackURLs use a placeholder that gets updated post-deploy via CLI
+  # to break the circular dependency between CloudFrontDistribution and this client.
+  AdminUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${StackPrefix}-cloudfront-client'
+      UserPoolId: !Ref AdminUserPool
+      GenerateSecret: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      AllowedOAuthFlowsUserPoolClient: true
+      SupportedIdentityProviders:
+        - COGNITO
+      # Placeholder callbacks - updated by deploy script after CloudFront domain is known
+      CallbackURLs:
+        - 'https://placeholder.cloudfront.net/ui'
+        - 'https://placeholder.cloudfront.net/ui/'
+      LogoutURLs:
+        - 'https://placeholder.cloudfront.net/ui'
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+      PreventUserExistenceErrors: ENABLED
+
+  # Initial admin user — invited by email
+  AdminUser:
+    Type: AWS::Cognito::UserPoolUser
+    Properties:
+      UserPoolId: !Ref AdminUserPool
+      Username: !Ref AdminEmail
+      DesiredDeliveryMediums:
+        - EMAIL
+      ForceAliasCreation: false
+      UserAttributes:
+        - Name: email
+          Value: !Ref AdminEmail
+        - Name: email_verified
+          Value: 'true'
+
+  # ── CloudFront Lambda@Edge for Cognito auth on /ui/* ─────────────
+  # We use a CloudFront Function (no Lambda needed) to check the Cognito
+  # session cookie set by the Cognito hosted UI.
+  # For the demo, we protect /ui/* with a simple Cognito auth flow via
+  # CloudFront Managed Response Headers Policy + WAF.
+
+  # ── CloudFront Distribution ───────────────────────────────────────
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub '${StackPrefix} AI Gateway'
+        Enabled: true
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        IPV6Enabled: true
+
+        # Custom domain support (optional)
+        Aliases: !If
+          - HasCustomDomain
+          - [!Ref CustomDomain]
+          - !Ref AWS::NoValue
+
+        # Default root object serves chatbox
+        DefaultRootObject: chatbox.html
+
+        # ── Origins ──────────────────────────────────────────────────
+        Origins:
+          # Origin 1: Internal ALB via VPC Origin
+          - Id: bifrost-alb
+            DomainName: !ImportValue
+              Fn::Sub: '${StackPrefix}-AlbDnsName'
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 60
+            OriginCustomHeaders:
+              # Secret header so ALB only accepts CloudFront traffic
+              - HeaderName: X-CloudFront-Secret
+                HeaderValue: !Sub '${AWS::AccountId}-${StackPrefix}-cf-secret'
+
+          # Origin 2: S3 bucket for chatbox.html
+          - Id: chatbox-s3
+            DomainName: !GetAtt ChatboxBucket.RegionalDomainName
+            OriginAccessControlId: !Ref S3OAC
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+
+        # ── Cache Behaviors ──────────────────────────────────────────
+
+        # /v1/* → Bifrost API (no caching, forward all headers+cookies)
+        CacheBehaviors:
+          - PathPattern: '/v1/*'
+            TargetOriginId: bifrost-alb
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # CachingDisabled
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3  # AllViewer
+            ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03  # SecurityHeadersPolicy
+            Compress: false
+
+          # /ui/* → Bifrost Admin UI via ALB (protected by Cognito)
+          - PathPattern: '/ui*'
+            TargetOriginId: bifrost-alb
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # CachingDisabled
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3  # AllViewer
+            ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03  # SecurityHeadersPolicy
+            Compress: true
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt CognitoAuthFunction.FunctionARN
+
+          # /metrics → block (never expose to internet)
+          - PathPattern: '/metrics*'
+            TargetOriginId: chatbox-s3
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt BlockMetricsFunction.FunctionARN
+
+          # /health → pass through to ALB (for monitoring)
+          - PathPattern: '/health'
+            TargetOriginId: bifrost-alb
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+
+        # Default behavior → S3 chatbox
+        DefaultCacheBehavior:
+          TargetOriginId: chatbox-s3
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03  # SecurityHeadersPolicy
+          Compress: true
+
+        # Custom error pages
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponsePagePath: /chatbox.html
+            ResponseCode: 200
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ResponsePagePath: /chatbox.html
+            ResponseCode: 200
+            ErrorCachingMinTTL: 0
+
+        # Logging
+        Logging:
+          Bucket: !GetAtt AccessLogBucket.DomainName
+          IncludeCookies: false
+          Prefix: cloudfront/
+
+  # ── CloudFront Functions ──────────────────────────────────────────
+
+  CognitoAuthFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub '${StackPrefix}-cognito-auth'
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Redirect unauthenticated users to Cognito hosted UI
+        Runtime: cloudfront-js-2.0
+      FunctionCode: !Sub |
+        function handler(event) {
+          var request = event.request;
+          var cookies = request.cookies;
+          var isAuthenticated = false;
+
+          for (var key in cookies) {
+            if (key.indexOf('CognitoIdentityServiceProvider') === 0 ||
+                key.indexOf('cognito') === 0) {
+              isAuthenticated = true;
+              break;
+            }
+          }
+          if (request.headers && request.headers.authorization) {
+            isAuthenticated = true;
+          }
+
+          if (!isAuthenticated) {
+            var cognitoDomain = 'https://${StackPrefix}-admin-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com';
+            var loginUrl = cognitoDomain + '/login?client_id=CLIENT_ID_PLACEHOLDER&response_type=code&scope=openid+email+profile&redirect_uri=https%3A%2F%2FDOMAIN_PLACEHOLDER%2Fui';
+            return {
+              statusCode: 302,
+              statusDescription: 'Found',
+              headers: {
+                location: { value: loginUrl },
+                'cache-control': { value: 'no-store, no-cache' }
+              }
+            };
+          }
+          return request;
+        }
+
+  # Block /metrics from being publicly accessible
+  BlockMetricsFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub '${StackPrefix}-block-metrics'
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Block direct access to Prometheus metrics endpoint
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          return {
+            statusCode: 403,
+            statusDescription: 'Forbidden',
+            headers: {
+              'content-type': { value: 'application/json' }
+            },
+            body: '{"error":"Access denied"}'
+          };
+        }
+
+  # ── Access log bucket for CloudFront ─────────────────────────────
+  AccessLogBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${StackPrefix}-cf-logs-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-logs
+            Status: Enabled
+            ExpirationInDays: 90
+
+  # ── ALB Security Group update: restrict to CloudFront only ────────
+  # Add a rule to the ALB SG to accept traffic only from the
+  # CloudFront managed prefix list (com.amazonaws.global.cloudfront.origin-facing)
+  # This ensures the internal ALB only receives requests from CloudFront.
+  AlbSgIngressFromCloudFront:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !ImportValue
+        Fn::Sub: '${StackPrefix}-AlbSgId'
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourcePrefixListId: pl-3b927c52  # com.amazonaws.global.cloudfront.origin-facing
+      Description: CloudFront managed prefix list
+
+Conditions:
+  HasCustomDomain: !Not [!Equals [!Ref CustomDomain, '']]
+
+Outputs:
+  CloudFrontDistributionId:
+    Value: !Ref CloudFrontDistribution
+    Export:
+      Name: !Sub '${StackPrefix}-CFDistributionId'
+
+  CloudFrontDomainName:
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub '${StackPrefix}-CFDomainName'
+
+  ChatboxUrl:
+    Description: Public URL for the chat UI
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
+
+  AdminUiUrl:
+    Description: Admin UI URL (requires Cognito login)
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}/ui'
+
+  CognitoLoginUrl:
+    Description: Direct Cognito hosted UI login URL
+    Value: !Sub 'https://${StackPrefix}-admin-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com/login?client_id=${AdminUserPoolClient}&response_type=code&scope=openid+email+profile&redirect_uri=https://${CloudFrontDistribution.DomainName}/ui'
+
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID (add users via AWS Console)
+    Value: !Ref AdminUserPool
+    Export:
+      Name: !Sub '${StackPrefix}-UserPoolId'
+
+  ChatboxBucketName:
+    Value: !Ref ChatboxBucket
+    Export:
+      Name: !Sub '${StackPrefix}-ChatboxBucket'

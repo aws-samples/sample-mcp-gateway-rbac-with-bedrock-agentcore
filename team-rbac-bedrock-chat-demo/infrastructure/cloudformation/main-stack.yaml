@@ -1,17 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: |
-  Team-Based RBAC LLM Gateway - Direct Bedrock API with team-based access control.
-
-  Deploys:
-  - REST API Gateway with API keys and usage plans per team
-  - Lambda proxy function (routes requests to Bedrock with team-based model governance)
-  - IAM roles scoped per team (Team Alpha: Haiku+Sonnet, Team Beta: Haiku only)
-  - CloudWatch log group with configurable retention
-
-  After deployment:
-  1. Get API key values from Outputs
-  2. Update chatbox.html with the API endpoint and keys
-  3. Open chatbox.html in a browser to test team-based access control
+  Team-Based RBAC LLM Gateway - Direct Bedrock API with team-based access control,
+  per-team token budget enforcement (DynamoDB), per-user CloudWatch metrics,
+  SNS alerting, and Bedrock invocation logging.
 
 Parameters:
   S3ArtifactBucket:
@@ -23,18 +14,21 @@ Parameters:
     Default: lambda/gateway-proxy.zip
     Description: S3 key for Lambda proxy code zip
 
+  TokenMetricPublisherCodeKey:
+    Type: String
+    Default: lambda/token-metric-publisher.zip
+    Description: S3 key for token metric publisher Lambda zip
+
   EnableGuardrail:
     Type: String
     Default: 'false'
+    AllowedValues: ['true', 'false']
     Description: Enable Bedrock Guardrail for content filtering
-    AllowedValues:
-      - 'true'
-      - 'false'
 
   GuardrailId:
     Type: String
     Default: ''
-    Description: (Optional) Bedrock Guardrail ID - required if EnableGuardrail is true
+    Description: (Optional) Bedrock Guardrail ID
 
   TeamAlphaRateLimit:
     Type: Number
@@ -46,6 +40,21 @@ Parameters:
     Default: 20
     Description: API requests per second for Team Beta
 
+  DailyTokenLimit:
+    Type: Number
+    Default: 100000
+    Description: Default daily token limit per team
+
+  MonthlyTokenLimit:
+    Type: Number
+    Default: 2000000
+    Description: Default monthly token limit per team
+
+  AlarmEmail:
+    Type: String
+    Default: ''
+    Description: (Optional) Email address for token budget alarm notifications
+
   LogRetentionDays:
     Type: Number
     Default: 7
@@ -53,21 +62,90 @@ Parameters:
     Description: CloudWatch Logs retention period
 
 Conditions:
-  UseGuardrail: !Not [!Equals [!Ref GuardrailId, '']]
+  UseGuardrail:  !Not [!Equals [!Ref GuardrailId, '']]
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
 
 Resources:
-  # ============================================================
-  # CloudWatch Log Group
-  # ============================================================
+
+  # ---- CloudWatch Log Groups ----
   ProxyLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-proxy'
       RetentionInDays: !Ref LogRetentionDays
 
-  # ============================================================
-  # IAM Roles
-  # ============================================================
+  TokenPublisherLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-token-publisher'
+      RetentionInDays: !Ref LogRetentionDays
+
+  BedrockInvocationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/bedrock/invocation-logs
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ---- DynamoDB Token Budget Table ----
+  TokenBudgetTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-token-budgets'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: teamId
+          AttributeType: S
+        - AttributeName: periodKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: teamId
+          KeyType: HASH
+        - AttributeName: periodKey
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # ---- SNS Topic for Alarms ----
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-bedrock-alarms'
+      DisplayName: Bedrock Token Budget Alarms
+
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmEmail
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  # ---- IAM: Bedrock Invocation Logging Role ----
+  BedrockLoggingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-bedrock-logging-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BedrockCloudWatchLogging
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock/invocation-logs:*'
+
+  # ---- IAM: Lambda Proxy Role ----
   LambdaProxyRole:
     Type: AWS::IAM::Role
     Properties:
@@ -96,14 +174,24 @@ Resources:
               - Effect: Allow
                 Action: bedrock:InvokeModel
                 Resource:
-                  # Cross-region inference profiles (us. prefixed model IDs route across US regions)
-                  - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.anthropic.claude-haiku*'
-                  - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet*'
-                  - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.anthropic.claude-opus*'
-                  # Foundation models (direct invocation fallback)
-                  - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku*'
-                  - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet*'
-                  - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-opus*'
+                  # Foundation model ARNs (direct invocation)
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-3-5-haiku*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-3-5-sonnet*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-opus*'
+                  # Cross-region inference profile ARNs (us.anthropic.* model IDs)
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-3-5-haiku*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-3-5-sonnet*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-opus*'
+        - PolicyName: DynamoDBTokenBudget
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt TokenBudgetTable.Arn
         - !If
           - UseGuardrail
           - PolicyName: GuardrailAccess
@@ -115,9 +203,37 @@ Resources:
                   Resource: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:guardrail/${GuardrailId}'
           - !Ref AWS::NoValue
 
-  # ============================================================
-  # Lambda Function
-  # ============================================================
+  # ---- IAM: Token Metric Publisher Role ----
+  TokenPublisherRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-token-publisher-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt TokenPublisherLogGroup.Arn
+        - PolicyName: CloudWatchMetrics
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: '*'
+
+  # ---- Lambda: Gateway Proxy ----
   GatewayProxyFunction:
     Type: AWS::Lambda::Function
     DependsOn: ProxyLogGroup
@@ -137,17 +253,51 @@ Resources:
           TEAM_BETA_MODELS: haiku
           GUARDRAIL_ID: !If [UseGuardrail, !Ref GuardrailId, '']
           GUARDRAIL_VERSION: DRAFT
+          TOKEN_BUDGET_TABLE: !Ref TokenBudgetTable
+          DAILY_TOKEN_LIMIT: !Sub '${DailyTokenLimit}'
+          MONTHLY_TOKEN_LIMIT: !Sub '${MonthlyTokenLimit}'
+          THROTTLE_THRESHOLD: '0.8'
+          THROTTLE_MAX_TOKENS: '500'
 
-  # ============================================================
-  # REST API Gateway with API Keys
-  # ============================================================
+  # ---- Lambda: Token Metric Publisher ----
+  TokenMetricPublisherFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: TokenPublisherLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-token-publisher'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt TokenPublisherRole.Arn
+      Timeout: 60
+      MemorySize: 128
+      Code:
+        S3Bucket: !Ref S3ArtifactBucket
+        S3Key: !Ref TokenMetricPublisherCodeKey
+
+  TokenPublisherLogsPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TokenMetricPublisherFunction
+      Action: lambda:InvokeFunction
+      Principal: logs.amazonaws.com
+      SourceArn: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock/invocation-logs:*'
+
+  BedrockLogSubscription:
+    Type: AWS::Logs::SubscriptionFilter
+    DependsOn: TokenPublisherLogsPermission
+    Properties:
+      LogGroupName: !Ref BedrockInvocationLogGroup
+      FilterName: BedrockTokenMetrics
+      FilterPattern: '{ $.schemaType = "ModelInvocationLog" }'
+      DestinationArn: !GetAtt TokenMetricPublisherFunction.Arn
+
+  # ---- API Gateway ----
   ApiGateway:
     Type: AWS::ApiGateway::RestApi
     Properties:
       Name: !Sub '${AWS::StackName}-api'
       Description: Team-based LLM Gateway with API key authentication
 
-  # /invoke resource
   InvokeResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -155,7 +305,6 @@ Resources:
       ParentId: !GetAtt ApiGateway.RootResourceId
       PathPart: invoke
 
-  # POST /invoke method (requires API key)
   InvokeMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -169,7 +318,6 @@ Resources:
         IntegrationHttpMethod: POST
         Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GatewayProxyFunction.Arn}/invocations'
 
-  # OPTIONS /invoke (CORS preflight - no API key required)
   InvokeOptionsMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -195,7 +343,6 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
 
-  # Deployment
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
@@ -216,7 +363,6 @@ Resources:
           ThrottlingRateLimit: 100
           ThrottlingBurstLimit: 200
 
-  # Lambda permission for API Gateway
   LambdaApiPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -225,9 +371,7 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*'
 
-  # ============================================================
-  # API Keys and Usage Plans
-  # ============================================================
+  # ---- API Keys and Usage Plans ----
   TeamAlphaApiKey:
     Type: AWS::ApiGateway::ApiKey
     DependsOn: ApiStage
@@ -290,31 +434,99 @@ Resources:
       KeyType: API_KEY
       UsagePlanId: !Ref TeamBetaUsagePlan
 
+  # ---- CloudWatch Alarms ----
+  TeamAlphaDailyTokenWarningAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-team-alpha-tokens-warning'
+      AlarmDescription: Team Alpha has consumed 80% of their daily token budget
+      Namespace: Bedrock/PerUser
+      MetricName: TotalTokens
+      Dimensions:
+        - Name: User
+          Value: team-alpha
+      Statistic: Sum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: !Sub '${DailyTokenLimit}'
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+  TeamAlphaDailyTokenBreachAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-team-alpha-tokens-breach'
+      AlarmDescription: Team Alpha has EXCEEDED their daily token budget
+      Namespace: Bedrock/PerUser
+      MetricName: TotalTokens
+      Dimensions:
+        - Name: User
+          Value: team-alpha
+      Statistic: Sum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: !Sub '${DailyTokenLimit}'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  TeamBetaDailyTokenBreachAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-team-beta-tokens-breach'
+      AlarmDescription: Team Beta has EXCEEDED their daily token budget
+      Namespace: Bedrock/PerUser
+      MetricName: TotalTokens
+      Dimensions:
+        - Name: User
+          Value: team-beta
+      Statistic: Sum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: !Sub '${DailyTokenLimit}'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
 Outputs:
   ApiEndpoint:
-    Description: API Gateway endpoint URL (use in chatbox.html)
+    Description: API Gateway endpoint URL
     Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/invoke'
 
   TeamAlphaApiKeyId:
-    Description: 'Team Alpha API Key ID (get value with: aws apigateway get-api-key --api-key <ID> --include-value)'
+    Description: Team Alpha API Key ID
     Value: !Ref TeamAlphaApiKey
 
   TeamBetaApiKeyId:
-    Description: 'Team Beta API Key ID (get value with: aws apigateway get-api-key --api-key <ID> --include-value)'
+    Description: Team Beta API Key ID
     Value: !Ref TeamBetaApiKey
+
+  TokenBudgetTableName:
+    Description: DynamoDB table for token budgets
+    Value: !Ref TokenBudgetTable
+
+  AlarmTopicArn:
+    Description: SNS topic ARN for token budget alarms
+    Value: !Ref AlarmTopic
+
+  BedrockLoggingRoleArn:
+    Description: IAM role ARN for Bedrock invocation logging
+    Value: !GetAtt BedrockLoggingRole.Arn
 
   ProxyFunctionArn:
     Description: Gateway proxy Lambda function ARN
     Value: !GetAtt GatewayProxyFunction.Arn
 
-  ProxyLogGroup:
-    Description: CloudWatch Log Group for auditing and cost tracking
-    Value: !Ref ProxyLogGroup
+  TokenPublisherFunctionArn:
+    Description: Token metric publisher Lambda ARN
+    Value: !GetAtt TokenMetricPublisherFunction.Arn
 
-  CloudWatchInsightsQuery:
-    Description: Sample CloudWatch Insights query for cost tracking
-    Value: !Sub |
-      Log Group: /aws/lambda/${AWS::StackName}-proxy
-      Query: fields @timestamp, team, model, status, input_tokens, output_tokens
-             | filter status = 'success'
-             | stats sum(input_tokens) as total_input, sum(output_tokens) as total_output by team
+  ProxyLogGroupName:
+    Description: CloudWatch Log Group for proxy audit logs
+    Value: !Ref ProxyLogGroup
