@@ -1,0 +1,49 @@
+# LiteLLM Proxy Configuration — Team RBAC with AWS Bedrock
+# Docs: https://docs.litellm.ai/docs/proxy/configs
+
+model_list:
+  # Claude Haiku 4.5 — Fast, cost-efficient (all teams)
+  - model_name: claude-haiku
+    litellm_params:
+      model: bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0
+      aws_region_name: us-east-1
+      # Uses ECS Task Role in production (no keys needed)
+      # For local dev, set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY env vars
+
+  # Claude Sonnet 4.5 — Balanced (Team Alpha only)
+  - model_name: claude-sonnet
+    litellm_params:
+      model: bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0
+      aws_region_name: us-east-1
+
+  # Claude Opus 4 — Most capable (restricted)
+  - model_name: claude-opus
+    litellm_params:
+      model: bedrock/us.anthropic.claude-opus-4-20250514-v1:0
+      aws_region_name: us-east-1
+
+# Router configuration
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  timeout: 60
+  allowed_fails: 3
+
+# LiteLLM settings
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  cache: true
+  cache_params:
+    type: redis
+    host: os.environ/REDIS_HOST
+    port: 6379
+    ttl: 600
+
+# General settings
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  alerting:
+    - slack
+  alerting_threshold: 300  # Alert if request takes >300s
