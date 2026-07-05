@@ -1,0 +1,52 @@
+{
+  "family": "bifrost-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "3072",
+  "executionRoleArn": "arn:aws:iam::058264435611:role/bifrost-ecs-execution-role",
+  "taskRoleArn": "arn:aws:iam::058264435611:role/bifrost-ecs-task-role",
+  "volumes": [{"name": "app-data"}],
+  "containerDefinitions": [
+    {
+      "name": "config-init",
+      "image": "amazon/aws-cli:latest",
+      "essential": false,
+      "command": ["s3","cp","s3://bifrost-artifacts-058264435611-us-east-1/config/bifrost-config.json","/app/data/config.json"],
+      "mountPoints": [{"sourceVolume":"app-data","containerPath":"/app/data","readOnly":false}],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {"awslogs-group":"/bifrost/container","awslogs-region":"us-east-1","awslogs-stream-prefix":"init"}
+      }
+    },
+    {
+      "name": "bifrost",
+      "image": "maximhq/bifrost:latest",
+      "essential": true,
+      "command": ["-host","0.0.0.0","-port","8080","-app-dir","/app/data"],
+      "portMappings": [{"containerPort": 8080, "protocol": "tcp"}],
+      "environment": [
+        {"name":"BIFROST_HOST","value":"0.0.0.0"},
+        {"name":"APP_PORT","value":"8080"},
+        {"name":"LOG_LEVEL","value":"info"},
+        {"name":"LOG_STYLE","value":"json"}
+      ],
+      "secrets": [
+        {"name":"BIFROST_ENCRYPTION_KEY","valueFrom":"arn:aws:ssm:us-east-1:058264435611:parameter/bifrost/encryption-key"},
+        {"name":"BIFROST_VK_TEAM_ALPHA","valueFrom":"arn:aws:ssm:us-east-1:058264435611:parameter/bifrost/virtual-keys/team-alpha"},
+        {"name":"BIFROST_VK_TEAM_BETA","valueFrom":"arn:aws:ssm:us-east-1:058264435611:parameter/bifrost/virtual-keys/team-beta"}
+      ],
+      "mountPoints": [{"sourceVolume":"app-data","containerPath":"/app/data","readOnly":false}],
+      "dependsOn": [{"containerName":"config-init","condition":"SUCCESS"}],
+      "healthCheck": {
+        "command": ["CMD-SHELL","wget -qO- http://localhost:8080/health || exit 1"],
+        "interval": 30, "timeout": 10, "retries": 3, "startPeriod": 90
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {"awslogs-group":"/bifrost/container","awslogs-region":"us-east-1","awslogs-stream-prefix":"bifrost"}
+      },
+      "ulimits": [{"name":"nofile","softLimit":65536,"hardLimit":65536}]
+    }
+  ]
+}
