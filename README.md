@@ -1,15 +1,16 @@
 # AWS Bedrock Governance Demos
 
-> **Two independent demos showing different patterns for governing AI access at scale**
+> **Three independent demos showing different patterns for governing AI access at scale**
 
-| | Demo #1: AgentCore Gateway | Demo #2: Team RBAC Chat |
-|---|---|---|
-| **⏱️ Deploy Time** | **~15 minutes** | **~10 minutes** |
-| **Interface** | VS Code + GitHub Copilot | Browser chatbox |
-| **Governance Level** | Tool-level (Cedar RBAC) | Model-level (per-team) |
-| **Preview Access?** | ⚠️ Yes (AgentCore) | ✅ No — standard AWS |
+| | Demo #1: AgentCore Gateway | Demo #2: Team RBAC Chat | Demo #3: Bifrost AI Gateway |
+|---|---|---|---|
+| **⏱️ Deploy Time** | **~15 minutes** | **~10 minutes** | **~20 minutes** |
+| **Interface** | VS Code + GitHub Copilot | Browser chatbox | Browser chatbox + CloudFront |
+| **Governance Level** | Tool-level (Cedar RBAC) | Model-level (per-team) | Model-level (virtual keys + quotas) |
+| **Preview Access?** | ⚠️ Yes (AgentCore) | ✅ No — standard AWS | ✅ No — standard AWS |
+| **Production-Ready?** | Demo only | Demo only | ✅ Yes — CloudFront, EFS, Grafana |
 
-This repository contains **two separate, independent demos** that solve different problems. Pick the one that matches your use case.
+This repository contains **three separate, independent demos** that solve different problems. Pick the one that matches your use case.
 
 ---
 
@@ -68,29 +69,73 @@ Browser → API Gateway → Lambda → Bedrock API (DIRECT - no AgentCore Gatewa
 
 ---
 
-## 🚨 Critical: These Demos Are INDEPENDENT
+### Demo #3: Bifrost AI Gateway — Production-Ready Multi-Team LLM Gateway
+� **Location:** `bifrost-implementation/`
+
+**What it does:** A fully production-grade AI gateway using [Bifrost](https://github.com/maximhq/bifrost) on ECS Fargate, fronted by CloudFront, with per-team virtual keys, daily token quotas, CloudWatch observability, and optional Amazon Managed Grafana dashboards.
+
+**Architecture:**
+```
+Browser → CloudFront (HTTPS) → Internal ALB → ECS Fargate (Bifrost) → AWS Bedrock
+                                                       │
+                                               CloudWatch Logs/Metrics
+                                               Amazon Managed Grafana (optional)
+```
+
+**Use this if you want:**
+- ✅ Production-ready gateway (not just a demo)
+- ✅ Per-team virtual API keys with daily token quotas
+- ✅ Model-level RBAC (Team Alpha: Haiku + Sonnet; Team Beta: Haiku only)
+- ✅ CloudFront HTTPS frontend with internal ALB (no public ECS exposure)
+- ✅ EFS-backed config persistence across container restarts
+- ✅ CloudWatch dashboard with real-time quota gauges and request metrics
+- ✅ Amazon Managed Grafana + Prometheus (optional)
+- ✅ Fully automated CDK TypeScript deployment
+- ✅ Standard AWS services only (no preview access needed)
+
+**Prerequisites:**
+- ✅ Standard AWS account (no preview access needed)
+- AWS Bedrock API access (Claude models enabled in your region)
+- Node.js 18+ and AWS CDK v2
+- AWS credentials configured (`aws configure` or IAM Identity Center)
+
+**👉 Start here:** [bifrost-implementation/INSTALL.md](bifrost-implementation/INSTALL.md)
+
+**Quick deploy:**
+```bash
+cd bifrost-implementation/cdk
+npm install
+ADMIN_EMAIL=you@example.com npx cdk deploy --all --require-approval never
+```
+
+---
+
+## 🚨 These Demos Are INDEPENDENT
 
 | Question | Answer |
 |----------|--------|
-| **Do I need both demos?** | ❌ NO - Pick ONE based on your use case |
-| **Does Demo 2 need Demo 1's Gateway?** | ❌ NO - Demo 2 goes directly to Bedrock API |
-| **Can I deploy Demo 2 first?** | ✅ YES - They're completely independent |
-| **Do they share infrastructure?** | ❌ NO - Separate CloudFormation/deployment |
-| **Different prerequisites?** | ✅ YES - Demo 1 needs AgentCore preview access |
+| **Do I need all three demos?** | ❌ NO — pick ONE based on your use case |
+| **Does Demo 2 or 3 need Demo 1's Gateway?** | ❌ NO — they go directly to Bedrock API |
+| **Do they share infrastructure?** | ❌ NO — separate CloudFormation/CDK stacks |
+| **Different prerequisites?** | ✅ YES — Demo 1 needs AgentCore preview access |
+| **Which is production-ready?** | Demo #3 (Bifrost) is designed for production use |
 
 ---
 
 ## Quick Comparison
 
-| Feature | Demo #1 (AgentCore Gateway) | Demo #2 (Direct Bedrock) |
-|---------|----------------------------|--------------------------|
-| **Interface** | VS Code + GitHub Copilot | Browser chatbox |
-| **RBAC Level** | Tool-level (e.g., `list_orders` vs `create_order`) | Model-level (e.g., Haiku vs Sonnet) |
-| **Policy Engine** | Cedar policies | Lambda code + IAM policies |
-| **AWS Services** | AgentCore Gateway (preview) | API Gateway + Lambda + Bedrock |
-| **Setup Time** | 15-20 min (requires AgentCore access) | 10-15 min (standard AWS) |
-| **Cost Attribution** | Per IAM user | Per team |
-| **Preview Access Needed?** | ⚠️ YES (contact AWS) | ✅ NO |
+| Feature | Demo #1 (AgentCore) | Demo #2 (Direct Bedrock) | Demo #3 (Bifrost Gateway) |
+|---------|---------------------|--------------------------|---------------------------|
+| **Interface** | VS Code + Copilot | Browser chatbox | Browser chatbox |
+| **RBAC Level** | Tool-level | Model-level | Model-level + quota |
+| **Policy Engine** | Cedar policies | Lambda code | Bifrost virtual keys |
+| **AWS Services** | AgentCore (preview) | API GW + Lambda | ECS + CloudFront + EFS |
+| **Setup Time** | 15-20 min | 10-15 min | 20-25 min |
+| **Cost Attribution** | Per IAM user | Per team | Per team (token-level) |
+| **Preview Access?** | ⚠️ YES | ✅ NO | ✅ NO |
+| **Production-Ready?** | Demo only | Demo only | ✅ Yes |
+| **Observability** | Basic | CloudWatch | CloudWatch + Grafana |
+| **Config persistence** | N/A | N/A | EFS + Secrets Manager |
 
 ---
 
@@ -98,29 +143,39 @@ Browser → API Gateway → Lambda → Bedrock API (DIRECT - no AgentCore Gatewa
 
 ### "Which demo should I start with?"
 
+**Start with Demo #3 (Bifrost)** if:
+- You want a production-ready deployment
+- You need token-level quota enforcement per team
+- You want a full observability stack (CloudWatch + Grafana)
+- You're building something you'll actually run in production
+
 **Start with Demo #2** if:
-- You want the quickest path to testing
-- You don't have AgentCore preview access yet
-- You care about team-based model access and cost tracking
-- You want a browser-based UI
+- You want the quickest, simplest path to testing
+- You don't need a production-grade gateway
+- You want a minimal Lambda-based implementation
 
 **Start with Demo #1** if:
 - You have AgentCore preview access
 - You want VS Code + GitHub Copilot integration
-- You need fine-grained tool-level permissions
-- You want Cedar policy-based RBAC
+- You need fine-grained tool-level (not just model-level) permissions
 
-### "Can I use both demos together?"
+### "What's the difference between Demo #2 and Demo #3?"
 
-Yes, but they're **designed to be independent**. Each demo stands alone and solves a different problem:
-- **Demo #1** = Developer productivity with governed AI coding assistants
-- **Demo #2** = Team-based LLM access control with cost tracking
+Both do team-based model access control, but at different scales:
 
-You can deploy both in the same AWS account, but they don't share infrastructure or depend on each other.
+| | Demo #2 | Demo #3 (Bifrost) |
+|---|---------|-------------------|
+| Gateway | Lambda proxy (100 lines) | Bifrost on ECS Fargate |
+| HTTPS | API Gateway | CloudFront + internal ALB |
+| Quota enforcement | API Gateway usage plans | Per-team daily token budgets |
+| Config persistence | Stateless Lambda | EFS-backed SQLite |
+| Observability | Basic CloudWatch | Dashboard + Grafana + alarms |
+| Deploy tool | CloudFormation | CDK TypeScript |
+| Production use | Demo only | Yes |
 
 ### "What if I don't have AgentCore access?"
 
-Start with **Demo #2** - it uses standard AWS services (API Gateway, Lambda, Bedrock) that are generally available. No preview access needed.
+Start with **Demo #2** or **Demo #3** — both use standard AWS services (API Gateway / ECS, Lambda, Bedrock) that are generally available. No preview access needed.
 
 To get AgentCore access for Demo #1, [contact AWS](https://aws.amazon.com/bedrock/) or your AWS account team.
 
@@ -144,84 +199,112 @@ gateway-url-ide-integration-demo/
 │       └── rbac-policy.cedar    # Cedar RBAC policies
 │
 ├── lambda/mcp-servers/          # Lambda MCPs
-│   ├── ecommerce-mcp/           # Customers tools
-│   ├── products-mcp/            # Products tools
-│   ├── orders-mcp/              # Orders tools
-│   └── jira-mcp/                # Jira tools
+│   ├── ecommerce-mcp/
+│   ├── products-mcp/
+│   ├── orders-mcp/
+│   └── jira-mcp/
 │
 └── vscode-config/
     └── mcp.json                 # VS Code MCP config template
 ```
 
-**Deploys:**
-- AgentCore Gateway
-- 4 Lambda MCP servers
-- Cedar policies
-- IAM roles for developers
-
----
-
 ### Demo #2 Contents (`team-rbac-bedrock-chat-demo/`)
 
 ```
 team-rbac-bedrock-chat-demo/
-├── README.md                    # Demo overview
-├── DEPLOYMENT.md                # Step-by-step setup
-├── DEMO.md                      # Testing scenarios
-│
+├── README.md
+├── DEPLOYMENT.md
 ├── chatbox.html                 # Browser chat UI
 │
-├── lambda/
-│   └── gateway-proxy/           # Lambda proxy (API Gateway → Bedrock)
-│       └── lambda_function.py   # Direct Bedrock API calls
+├── lambda/gateway-proxy/
+│   └── lambda_function.py      # Direct Bedrock API calls
 │
-└── infrastructure/
-    └── cloudformation/
-        └── main-stack.yaml      # API Gateway, Lambda, IAM roles
+└── infrastructure/cloudformation/
+    └── main-stack.yaml          # API Gateway, Lambda, IAM roles
 ```
 
-**Deploys:**
-- API Gateway with usage plans
-- Lambda proxy function
-- IAM roles for teams
-- CloudWatch logging
+### Demo #3 Contents (`bifrost-implementation/`)
+
+```
+bifrost-implementation/
+├── INSTALL.md                   # Full installation guide (CDK + manual)
+├── bifrost-config.json          # Bifrost config template (uses env vars)
+├── task-def.json                # ECS task definition template (with placeholders)
+│
+├── cdk/                         # CDK TypeScript app — deploy everything from here
+│   ├── bin/app.ts               # Entry point — reads env vars, wires stacks
+│   ├── lib/
+│   │   ├── vpc-stack.ts         # VPC, subnets, NAT gateways, security groups
+│   │   ├── bifrost-stack.ts     # ECS Fargate, internal ALB, EFS, IAM roles
+│   │   ├── cloudfront-stack.ts  # CloudFront VPC Origin, Cognito, S3 chatbox
+│   │   ├── observability-stack.ts # CloudWatch dashboard, alarms, quota Lambda
+│   │   └── grafana-stack.ts     # Amazon Managed Grafana + Prometheus (optional)
+│   └── package.json
+│
+├── cloudformation/              # Manual deploy alternative (individual stacks)
+│   ├── 01-vpc.yaml
+│   ├── 02-ecs.yaml
+│   ├── 03-cloudfront.yaml
+│   └── 04-observability.yaml
+│
+├── chatbox/
+│   └── chatbox.html             # Browser-based chat UI (uploaded to S3)
+│
+└── scripts/
+    ├── deploy-bifrost.sh        # Full CloudFormation deploy script
+    ├── update-chatbox-keys.sh   # Patch chatbox with live virtual keys
+    └── quota-publisher/
+        └── lambda_function.py   # Publishes token quota % to CloudWatch every 5 min
+```
 
 ---
 
 ## Getting Started
 
-### For Demo #1 (AgentCore Gateway + VS Code):
+### Demo #3 — Bifrost AI Gateway (Recommended for production)
 
 ```bash
-# 1. Check prerequisites
-agentcore --version  # Verify AgentCore CLI installed
+# 1. Install CDK
+npm install -g aws-cdk
 
-# 2. Deploy gateway
+# 2. Install dependencies
+cd bifrost-implementation/cdk && npm install
+
+# 3. Bootstrap CDK (first time only)
+cdk bootstrap
+
+# 4. Deploy everything
+ADMIN_EMAIL=you@example.com npx cdk deploy --all --require-approval never
+```
+
+CDK will print your live URLs when complete:
+- **Chat UI:** `https://xxxx.cloudfront.net/chat.html`
+- **Admin UI:** `https://xxxx.cloudfront.net`
+- **CloudWatch Dashboard:** link printed in outputs
+
+**Full guide with manual step-by-step:** [bifrost-implementation/INSTALL.md](bifrost-implementation/INSTALL.md)
+
+---
+
+### Demo #1 — AgentCore Gateway + VS Code
+
+```bash
 cd gateway-url-ide-integration-demo/DemoMcpGateway/agentcore
 agentcore deploy
-
-# 3. Follow VS Code setup guide
-open ../VSCODE_SETUP.md
 ```
 
 **Full guide:** [gateway-url-ide-integration-demo/DEPLOYMENT.md](gateway-url-ide-integration-demo/DEPLOYMENT.md)
 
 ---
 
-### For Demo #2 (Browser Chat + Team RBAC):
+### Demo #2 — Browser Chat + Team RBAC
 
 ```bash
-# 1. Deploy infrastructure
 cd team-rbac-bedrock-chat-demo/infrastructure/cloudformation
 aws cloudformation create-stack \
   --stack-name llm-gateway-demo \
   --template-body file://main-stack.yaml \
   --capabilities CAPABILITY_IAM
-
-# 2. Update chatbox.html with API Gateway URL and API keys
-
-# 3. Open in browser
-open ../../chatbox.html
 ```
 
 **Full guide:** [team-rbac-bedrock-chat-demo/DEPLOYMENT.md](team-rbac-bedrock-chat-demo/DEPLOYMENT.md)
@@ -235,193 +318,156 @@ open ../../chatbox.html
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  Developer Workstation                                  │
-│  ┌───────────────────────────────────────────────────┐ │
-│  │  VS Code + GitHub Copilot                         │ │
-│  │  AWS Credentials: IAM User (tag: group=ReadOnly)  │ │
-│  └────────────────┬──────────────────────────────────┘ │
-└───────────────────┼──────────────────────────────────────┘
-                    │ stdio + SigV4
-                    ▼
-        ┌───────────────────────────┐
-        │   MCP Proxy (local)       │
-        │   Signs with IAM creds    │
-        └───────────┬───────────────┘
-                    │ HTTPS + SigV4
-                    ▼
-        ┌───────────────────────────────────┐
-        │  AWS Bedrock AgentCore Gateway    │
-        │  ┌─────────────────────────────┐  │
-        │  │  Cedar Policy Engine        │  │
-        │  │  • Reads IAM user tags      │  │
-        │  │  │  Evaluates permit/deny   │  │
-        │  └─────────────────────────────┘  │
-        └───────────┬───────────────────────┘
-                    │
-        ┌───────────┴──────┬──────┬──────┐
-        ▼                  ▼      ▼      ▼
-    ┌────────┐        ┌────────┐ ┌────┐ ┌────┐
-    │Customers        │Products│ │Orders Jira│
-    │  MCP   │        │  MCP   │ │ MCP│ │MCP │
-    │Lambda  │        │ Lambda │ │Lambda Lambda
-    └────────┘        └────────┘ └────┘ └────┘
+│  VS Code + GitHub Copilot                               │
+│  AWS Credentials: IAM User (tag: group=ReadOnly)        │
+└────────────────┬────────────────────────────────────────┘
+                 │ stdio + SigV4
+                 ▼
+     ┌───────────────────────────┐
+     │   MCP Proxy (local)       │
+     └───────────┬───────────────┘
+                 │ HTTPS + SigV4
+                 ▼
+     ┌───────────────────────────────────┐
+     │  AWS Bedrock AgentCore Gateway    │
+     │  Cedar Policy Engine              │
+     │  • Reads IAM user tags            │
+     │  • Evaluates permit/deny          │
+     └───────────┬───────────────────────┘
+                 │
+     ┌───────────┴──────┬──────┬──────┐
+     ▼                  ▼      ▼      ▼
+  Customers MCP   Products MCP  Orders MCP  Jira MCP
+  (Lambda)        (Lambda)      (Lambda)    (Lambda)
 ```
-
----
 
 ### Demo #2 Architecture (Direct Bedrock)
 
 ```
-┌────────────────────────────────────────┐
-│  Browser (chatbox.html)                │
-│  Team Alpha: API Key → team-alpha      │
-│  Team Beta:  API Key → team-beta       │
-└────────────────┬───────────────────────┘
-                 │ HTTPS + x-api-key
-                 ▼
-      ┌──────────────────────┐
-      │   API Gateway        │
-      │   • Validates key    │
-      │   • Usage plans      │
-      └──────────┬───────────┘
-                 │
-                 ▼
-      ┌─────────────────────────────────┐
-      │  Lambda Proxy                   │
-      │  1. Map key → team              │
-      │  2. Check model permissions     │
-      │  3. Call bedrock.invoke_model() │
-      │  4. Log with team attribution   │
-      └──────────┬──────────────────────┘
-                 │
-                 ▼
-      ┌─────────────────────────┐
-      │  AWS Bedrock API        │
-      │  • Claude Haiku         │
-      │  • Claude Sonnet        │
-      │  • Claude Opus          │
-      └─────────────────────────┘
+Browser (chatbox.html)
+  │  HTTPS + x-api-key
+  ▼
+API Gateway  →  Lambda Proxy  →  AWS Bedrock
+               (team lookup,      (Claude models)
+                model check)
 ```
 
-**Key Difference:** Demo #2 goes **directly to Bedrock API** - no AgentCore Gateway!
+### Demo #3 Architecture (Bifrost AI Gateway)
+
+```
+Internet
+   │ HTTPS
+   ▼
+CloudFront (DDoS protection, TLS termination)
+   │  VPC Origin — ALB is never publicly exposed
+   │
+   ├── /*          → Bifrost Admin UI  (ECS via internal ALB)
+   ├── /v1/*       → Bifrost API       (ECS via internal ALB)
+   ├── /chat.html  → S3 chatbox        (static HTML)
+   └── /metrics*   → Blocked (403)
+           │
+           ▼
+   ECS Fargate — private subnet
+   Bifrost container
+           │
+           ├──→ AWS Bedrock (Claude via IAM role — no API keys)
+           ├──→ CloudWatch Logs (/bifrost/container, /bifrost/access)
+           └──→ EFS (config persistence across restarts)
+
+Lambda (every 5 min):
+   QuotaPublisher → CloudWatch metrics (QuotaUtilisationPct per team)
+
+CloudWatch Namespace: Bifrost/Gateway
+   RequestCount, TokensInput, TokensOutput,
+   ModelAccessDenied, Errors, LatencySeconds,
+   QuotaUtilisationPct, DailyTokensUsed
+
+Optional: Amazon Managed Grafana → CloudWatch datasource → live dashboards
+```
 
 ---
 
 ## Use Cases
 
-### Demo #1 Use Cases (Tool-Level RBAC)
+### Demo #1: Tool-Level RBAC
+- Enterprise developer productivity with governed AI coding assistants
+- Junior devs: read-only tools; senior devs: full CRUD; admins: infra tools
+- Every tool invocation logged with IAM principal for audit
 
-1. **Enterprise Developer Productivity**
-   - Junior developers: Read-only tool access
-   - Senior developers: Full CRUD tool access
-   - Admins: Infrastructure and deployment tools
+### Demo #2: Simple Model-Level RBAC
+- Quickest path to team-based model access control
+- Team A: balanced (Haiku + Sonnet); Team B: cost-optimized (Haiku only)
+- Monthly cost chargeback per team via CloudWatch logs
 
-2. **Multi-Team MCP Governance**
-   - Support team: customer-mcp + jira-mcp only
-   - Engineering team: All MCPs
-   - Data science team: analytics-mcp only
-
-3. **Compliance & Audit**
-   - Every tool invocation logged with IAM principal
-   - CloudWatch logs for SOC2/HIPAA compliance
-
----
-
-### Demo #2 Use Cases (Model-Level RBAC)
-
-1. **Cost Control by Team**
-   - Team A: Balanced (Haiku + Sonnet)
-   - Team B: Cost-optimized (Haiku only)
-   - Monthly chargeback per team
-
-2. **Gradual Model Rollout**
-   - Start all teams on Haiku
-   - Promote alpha teams to Sonnet
-   - Restrict Opus to high-value use cases
-
-3. **Department-Based Access**
-   - Engineering: Full model access
-   - Support: Basic models only
-   - Executives: Premium models
-
----
-
-## Troubleshooting
-
-### Demo #1 Issues
-
-**"AgentCore CLI not found"**
-```bash
-npm install -g @aws/agentcore-cli
-agentcore --version
-```
-
-**"Gateway deployment fails"**
-- Check you have AgentCore preview access
-- Verify CDK dependencies: `cd cdk && npm install`
-
-**Full troubleshooting:** [gateway-url-ide-integration-demo/DEPLOYMENT.md](gateway-url-ide-integration-demo/DEPLOYMENT.md)
-
----
-
-### Demo #2 Issues
-
-**"403 Forbidden from Lambda"**
-- Check IAM role has `bedrock:InvokeModel` permission
-- Verify Lambda environment variables are set correctly
-
-**"CloudFormation stack fails"**
-- Ensure S3 bucket exists (if using S3 for Lambda code)
-- Check you have sufficient IAM permissions
-
-**Full troubleshooting:** [team-rbac-bedrock-chat-demo/DEPLOYMENT.md](team-rbac-bedrock-chat-demo/DEPLOYMENT.md)
+### Demo #3: Production AI Gateway
+- Production-grade model access control with token budgets
+- Daily quota enforcement — Team Alpha can't blow past 100K tokens/day
+- Real-time observability: request rates, latency percentiles, quota gauges
+- Gradual model rollout: promote teams from Haiku → Sonnet as needed
+- Department-based access: Engineering gets Opus, Support gets Haiku only
 
 ---
 
 ## Cost Estimates
 
 ### Demo #1 (AgentCore Gateway)
-**For 10 developers, 100 tool calls/day:**
-
-| Service | Usage | Monthly Cost |
-|---------|-------|--------------|
-| AgentCore Gateway | 30K requests | ~$5 |
-| Lambda (MCPs) | 30K invocations | ~$1 |
-| CloudWatch Logs | 1 GB | ~$0.50 |
-| **Total** | | **~$6.50/month** |
-
----
+| Service | Monthly Cost |
+|---------|--------------|
+| AgentCore Gateway (30K req) | ~$5 |
+| Lambda MCPs | ~$1 |
+| CloudWatch Logs | ~$0.50 |
+| **Total** | **~$6.50/month** |
 
 ### Demo #2 (Direct Bedrock)
-**For 10 teams, 1000 requests/day:**
+| Service | Monthly Cost |
+|---------|--------------|
+| API Gateway (300K req) | ~$3 |
+| Lambda proxy | ~$1 |
+| Bedrock (Haiku 4.5, 300K × 1K tokens) | ~$300 |
+| **Total** | **~$304/month** |
 
-| Service | Usage | Monthly Cost |
-|---------|-------|--------------|
-| API Gateway | 300K requests | ~$3 |
-| Lambda (proxy) | 300K invocations | ~$1 |
-| CloudWatch Logs | 5 GB | ~$2.50 |
-| Bedrock (Haiku 4.5) | 300K × 1K tokens | ~$300 |
-| **Total** | | **~$306.50/month** |
-
-*Bedrock model costs dominate - gateway overhead is minimal. Pricing: Haiku 4.5 at $1/$5 per 1M input/output tokens.*
+### Demo #3 (Bifrost Gateway)
+| Service | Monthly Cost |
+|---------|--------------|
+| ECS Fargate (1 vCPU, 3GB) | ~$35 |
+| ALB | ~$20 |
+| CloudFront (1M requests) | ~$1 |
+| NAT Gateways (2×) | ~$65 |
+| CloudWatch (metrics + logs) | ~$5 |
+| Secrets Manager | ~$0.50 |
+| **Total infrastructure** | **~$127/month** |
+| Bedrock (Haiku, 1K req/day) | ~$30/month |
+| *Optional: Managed Grafana* | *~$10/month* |
 
 ---
 
-## 🧹 Cleanup & Verification
+## Troubleshooting
 
-After a demo, verify nothing is left running in your account:
+### Demo #1
+**"AgentCore CLI not found"** → `npm install -g @aws/agentcore-cli`
 
-```bash
-# Verify all resources are deleted
-./scripts/verify-cleanup.sh
+### Demo #2
+**"403 from Lambda"** → Check IAM role has `bedrock:InvokeModel`
 
-# Or tear down + verify in one go:
-make destroy-demo2                    # Demo 2
-aws cloudformation delete-stack \     # Demo 1
-  --stack-name mcp-demo --region us-east-1
-./scripts/verify-cleanup.sh           # Confirm clean
-```
+### Demo #3
+**"Bifrost health check fails"** → `aws logs tail /bifrost/container --since 10m`
+**"Chat returns 502"** → `curl https://YOUR_CF_URL/health` (should return `{"status":"ok"}`)
+**"Virtual keys lost after restart"** → Re-configure via Admin UI (keys are in EFS now with CDK deploy)
+**"Grafana shows No data"** → Metrics appear after first requests; quota metrics within 5 min
 
-The verification script checks CloudFormation stacks, Lambda functions, IAM users/roles, API Gateways, and CloudWatch log groups — then tells you exactly what's still active and how to remove it.
+Full troubleshooting guides in each demo's DEPLOYMENT.md or INSTALL.md.
+
+---
+
+## Security Notes
+
+All three demos follow AWS security best practices:
+- **No hardcoded credentials** — secrets auto-generated and stored in Secrets Manager / SSM
+- **IAM roles over API keys** — ECS task roles for Bedrock access (Demo #3)
+- **No public ALB** — CloudFront VPC Origin keeps ALB internal (Demo #3)
+- **No public ECS** — tasks run in private subnets with NAT egress (Demo #3)
+- **Admin UI invite-only** — Cognito with no self-registration (Demo #3)
+- **All resources tagged** — `auto-delete=no`, `project=bifrost-gateway`, `ManagedBy=CDK`
 
 ---
 
@@ -429,9 +475,11 @@ The verification script checks CloudFormation stacks, Lambda functions, IAM user
 
 - [AWS Bedrock Documentation](https://docs.aws.amazon.com/bedrock/)
 - [AWS Bedrock AgentCore Documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/agentcore.html)
+- [Bifrost AI Gateway](https://github.com/maximhq/bifrost)
 - [Model Context Protocol Specification](https://modelcontextprotocol.io/)
 - [Cedar Policy Language](https://www.cedarpolicy.com/)
-- [📄 Customer One-Pager (leave-behind)](docs/customer-one-pager.md) — print/export to PDF for customer meetings
+- [AWS CDK v2 Documentation](https://docs.aws.amazon.com/cdk/v2/guide/)
+- [📄 Customer One-Pager](docs/customer-one-pager.md)
 
 ---
 
@@ -442,6 +490,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 We welcome:
 - New MCP server examples (Demo #1)
 - Additional Lambda proxy patterns (Demo #2)
+- Bifrost configuration examples (Demo #3)
 - Cedar policy examples
 - Integration guides for other AI tools
 
@@ -453,18 +502,10 @@ This library is licensed under the MIT-0 License. See [LICENSE](LICENSE).
 
 ---
 
-## Support
+**🎯 Remember:** These are **three independent demos**. Pick the one that matches your use case.
 
-For questions or issues:
-1. Check the demo-specific README and DEPLOYMENT guide
-2. Review troubleshooting sections
-3. Open an issue in this repository
-
----
-
-**🎯 Remember:** These are **two independent demos**. Pick the one that matches your use case, and don't assume you need both!
-
-- **Tool-level RBAC for AI coding?** → Demo #1
-- **Team-based model access control?** → Demo #2
+- **Tool-level RBAC for AI coding assistants?** → Demo #1
+- **Quickest team-based model access control?** → Demo #2
+- **Production-grade AI gateway with quotas and observability?** → Demo #3
 
 **Happy building!** 🚀
