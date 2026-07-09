@@ -1,0 +1,81 @@
+{
+  "$schema": "https://www.getbifrost.ai/schema",
+  "encryption_key": "env.BIFROST_ENCRYPTION_KEY",
+  "client": {
+    "allowed_origins": ["*"],
+    "drop_excess_requests": false,
+    "enable_logging": true,
+    "log_retention_days": 30,
+    "enforce_auth_on_inference": true,
+    "allow_direct_keys": false,
+    "initial_pool_size": 100
+  },
+  "providers": {
+    "bedrock": {
+      "keys": [
+        {
+          "id": "bedrock-iam-us-east-1",
+          "name": "bedrock-iam-role",
+          "bedrock_key_config": {
+            "region": "us-east-1"
+          },
+          "models": ["*"],
+          "weight": 1
+        }
+      ],
+      "network_config": {
+        "default_request_timeout_in_seconds": 300,
+        "max_retries": 3
+      }
+    }
+  },
+  "governance": {
+    "virtual_keys": [
+      {
+        "id": "sk-bf-team-alpha",
+        "name": "team-alpha",
+        "description": "Team Alpha - Haiku and Sonnet, 100K tokens/day",
+        "value": "env.BIFROST_VK_TEAM_ALPHA",
+        "is_active": true,
+        "provider_configs": [
+          {
+            "provider": "bedrock",
+            "key_ids": ["bedrock-iam-us-east-1"],
+            "allowed_models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+              "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "sk-bf-team-beta",
+        "name": "team-beta",
+        "description": "Team Beta - Haiku only, 50K tokens/day",
+        "value": "env.BIFROST_VK_TEAM_BETA",
+        "is_active": true,
+        "provider_configs": [
+          {
+            "provider": "bedrock",
+            "key_ids": ["bedrock-iam-us-east-1"],
+            "allowed_models": [
+              "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "plugins": [
+    {
+      "name": "governance",
+      "enabled": true,
+      "config": {
+        "is_vk_mandatory": true
+      }
+    }
+  ],
+  "config_store": {
+    "enabled": false
+  }
+}

@@ -82,6 +82,12 @@ htmlcov/
 *.pfx
 .credentials-*
 
+# Bifrost auto-generated encryption key
+# This file is created by deploy-bifrost.sh and contains your 32-char encryption key.
+# NEVER commit this file. Store the key in AWS Secrets Manager or SSM Parameter Store.
+# See: bifrost-implementation/scripts/deploy-bifrost.sh (--encryption-key flag)
+bifrost-implementation/scripts/.bifrost-key
+
 # CloudFormation outputs
 outputs.json
 stack-outputs.txt
@@ -91,3 +97,7 @@ tmp/
 temp/
 *.tmp
 node_modules/
+
+# Allow CDK TypeScript lib directory (not build output)
+!bifrost-implementation/cdk/lib/
+!bifrost-implementation/cdk/lib/**
