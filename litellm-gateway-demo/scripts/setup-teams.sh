@@ -21,13 +21,13 @@ echo ""
 
 # Wait for LiteLLM to be ready
 echo "⏳ Waiting for LiteLLM to be ready..."
-for i in $(seq 1 30); do
-  if curl -sf "$LITELLM_URL/health" > /dev/null 2>&1; then
+for i in $(seq 1 60); do
+  if curl -sf "$LITELLM_URL/health/liveliness" > /dev/null 2>&1; then
     echo "  ✅ LiteLLM is ready"
     break
   fi
-  if [ "$i" -eq 30 ]; then
-    echo "  ❌ LiteLLM not ready after 30s. Is it running?"
+  if [ "$i" -eq 60 ]; then
+    echo "  ❌ LiteLLM not ready after 60s. Is it running?"
     exit 1
   fi
   sleep 1
@@ -35,7 +35,7 @@ done
 echo ""
 
 # ── Create Team Alpha ──
-echo "━━━ Creating Team Alpha (Haiku + Sonnet, $200/mo budget) ━━━"
+echo "━━━ Creating Team Alpha (Haiku + Sonnet, \$200/mo budget) ━━━"
 TEAM_ALPHA=$(curl -sf -X POST "$LITELLM_URL/team/new" \
   -H "Authorization: Bearer $MASTER_KEY" \
   -H "Content-Type: application/json" \
@@ -51,7 +51,7 @@ echo "  ✅ Team Alpha created: $TEAM_ALPHA_ID"
 echo ""
 
 # ── Create Team Beta ──
-echo "━━━ Creating Team Beta (Haiku only, $50/mo budget) ━━━"
+echo "━━━ Creating Team Beta (Haiku only, \$50/mo budget) ━━━"
 TEAM_BETA=$(curl -sf -X POST "$LITELLM_URL/team/new" \
   -H "Authorization: Bearer $MASTER_KEY" \
   -H "Content-Type: application/json" \

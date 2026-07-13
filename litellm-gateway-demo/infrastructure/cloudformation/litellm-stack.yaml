@@ -354,7 +354,7 @@ Resources:
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: litellm
           HealthCheck:
-            Command: ["CMD-SHELL", "curl -f http://localhost:4000/health || exit 1"]
+            Command: ["CMD-SHELL", "curl -f http://localhost:4000/health/liveliness || exit 1"]
             Interval: 30
             Timeout: 5
             Retries: 3

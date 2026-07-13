@@ -42,7 +42,7 @@ echo ""
 # ── Wait for healthy ──
 echo "⏳ Waiting for LiteLLM..."
 for i in $(seq 1 30); do
-  if curl -sf "$LITELLM_URL/health" > /dev/null 2>&1; then break; fi
+  if curl -sf "$LITELLM_URL/health/liveliness" > /dev/null 2>&1; then break; fi
   if [ "$i" -eq 30 ]; then echo "❌ Not ready after 30s"; exit 1; fi
   sleep 1
 done
