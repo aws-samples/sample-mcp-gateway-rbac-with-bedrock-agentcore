@@ -150,9 +150,9 @@ echo ""
 # Demo 2: parse CloudWatch logs manually
 # LiteLLM: GET /key/info → instant spend data
 # ════════════════════════════════════════════════════════════════════════
-echo "━━━ Test 3: Real-time spend tracking per key (no CloudWatch needed) ━━━"
-info "Demo 2: write a CloudWatch Insights query, wait for log ingestion"
-info "LiteLLM: GET /key/info → instant JSON with spend"
+echo "━━━ Test 3: Real-time spend tracking per key (instant, no 24hr delay) ━━━"
+info "Demo 2: spend only visible after CloudWatch log ingestion + Insights query"
+info "LiteLLM: GET /key/info → instant per-key spend (CloudWatch still used for infra logs)"
 echo ""
 
 SPEND_RESP=$(curl -sf "$LITELLM_URL/key/info" \
@@ -169,7 +169,7 @@ print(f'{spend:.6f}')
 " 2>/dev/null || echo "UNKNOWN")
 
 if [ "$SPEND" != "UNKNOWN" ]; then
-  pass "Key spend queryable in real-time: \$$SPEND (no CloudWatch delay)"
+  pass "Key spend queryable in real-time: \$$SPEND (complements CloudWatch for infra metrics)"
 else
   fail "Could not query key spend" "$SPEND_RESP"
 fi
@@ -214,9 +214,9 @@ echo ""
 # Demo 2: nothing — no UI, no dashboard
 # LiteLLM: /team/list shows all teams with spend
 # ════════════════════════════════════════════════════════════════════════
-echo "━━━ Test 5: Admin visibility — list all teams + spend (no custom UI needed) ━━━"
-info "Demo 2 has no dashboard — you'd need to build one"
-info "LiteLLM: GET /team/list or open /ui in browser"
+echo "━━━ Test 5: Admin visibility — list all teams + spend (built-in dashboard) ━━━"
+info "Demo 2: no dashboard — parse CloudWatch Logs Insights manually"
+info "LiteLLM: GET /team/list or open /ui (CloudWatch still handles ECS/ALB/Bedrock metrics)"
 echo ""
 
 TEAMS_RESP=$(curl -sf "$LITELLM_URL/team/list" \
@@ -283,10 +283,10 @@ fi
 echo ""
 echo "What you just saw (that Demo 2 CANNOT do):"
 echo "  1. Created a team via API — no code change, no redeploy"
-echo "  2. Budget enforcement — blocked request BEFORE it hit Bedrock"
-echo "  3. Real-time spend query — no CloudWatch, instant JSON"
-echo "  4. Admin visibility — team list with spend (or use /ui dashboard)"
-echo "  5. Instant revocation — deleted team, key immediately invalid"
+echo "  2. Budget enforcement — blocked request BEFORE it hit Bedrock (\$0 spent)"
+echo "  3. Real-time spend per key — instant API query (CloudWatch still used for infra)"
+echo "  4. Admin dashboard — team list with spend visible in /ui"
+echo "  5. Instant revocation — deleted team, key invalid immediately"
 echo ""
 echo "Open the Admin UI: $LITELLM_URL/ui"
 echo ""
