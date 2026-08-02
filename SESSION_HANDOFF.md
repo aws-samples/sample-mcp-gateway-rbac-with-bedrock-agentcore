@@ -1,6 +1,6 @@
 # Session Handoff — Bifrost AI Gateway Project
 > Last updated: July 2026
-> Written for: talroze
+> Written for: YOUR_ALIAS
 > Purpose: Complete state snapshot so you (or Kiro) can resume with zero context loss after ~1 month away
 
 ---
@@ -15,7 +15,7 @@ You built a **production-grade AI Gateway** on AWS using [Bifrost](https://githu
 
 | Item | Value |
 |---|---|
-| **AWS Account ID** | `058264435611` |
+| **AWS Account ID** | `YOUR_AWS_ACCOUNT_ID` |
 | **Region** | `us-east-1` |
 | **IAM Identity** | Isengard short-lived credentials (rotate every ~10 min) |
 
@@ -32,27 +32,27 @@ You built a **production-grade AI Gateway** on AWS using [Bifrost](https://githu
 
 | Resource | URL / ID |
 |---|---|
-| **Admin UI** | `https://dlnn8ddmivrs6.cloudfront.net` |
-| **Chat UI** | `https://dlnn8ddmivrs6.cloudfront.net/chat.html` |
-| **Health check** | `https://dlnn8ddmivrs6.cloudfront.net/health` → `{"status":"ok"}` |
-| **CloudFront dist** | `E1MAAFJGS8IKCJ` |
+| **Admin UI** | `https://YOUR_CLOUDFRONT_DOMAIN.cloudfront.net` |
+| **Chat UI** | `https://YOUR_CLOUDFRONT_DOMAIN.cloudfront.net/chat.html` |
+| **Health check** | `https://YOUR_CLOUDFRONT_DOMAIN.cloudfront.net/health` → `{"status":"ok"}` |
+| **CloudFront dist** | `YOUR_CF_DISTRIBUTION_ID` |
 | **ECS Cluster** | `bifrost-cluster` |
 | **ECS Service** | `bifrost-service` |
 | **Internal ALB** | `bifrost-alb` (internal, not publicly accessible) |
-| **S3 chatbox bucket** | `bifrost-chatbox-058264435611` |
-| **S3 artifacts bucket** | `bifrost-artifacts-058264435611-us-east-1` |
+| **S3 chatbox bucket** | `bifrost-chatbox-YOUR_AWS_ACCOUNT_ID` |
+| **S3 artifacts bucket** | `bifrost-artifacts-YOUR_AWS_ACCOUNT_ID-us-east-1` |
 
 ### Grafana
 
 | Resource | Value |
 |---|---|
-| **Grafana workspace** | `g-aa3e631ca3` |
-| **Grafana URL** | `https://g-aa3e631ca3.grafana-workspace.us-east-1.amazonaws.com` |
+| **Grafana workspace** | `YOUR_GRAFANA_WORKSPACE_ID` |
+| **Grafana URL** | `https://YOUR_GRAFANA_WORKSPACE_ID.grafana-workspace.us-east-1.amazonaws.com` |
 | **Dashboard** | `bifrost-gateway-main` (Bifrost AI Gateway Team Observability) |
-| **Dashboard URL** | `https://g-aa3e631ca3.grafana-workspace.us-east-1.amazonaws.com/d/bifrost-gateway-main/bifrost-ai-gateway-team-observability` |
-| **SSO user (Grafana admin)** | `talrozedemo` (ID: `4488d468-2031-702b-eebe-01ad16e77e25`) |
-| **CloudWatch datasource** | UID `dfr70yol68mwwe`, name `CloudWatch-Bifrost` |
-| **AMP workspace** | `ws-d729248f-bacd-4bd1-a20d-d2bcc21c2ea1` (created, not yet wired to ADOT) |
+| **Dashboard URL** | `https://YOUR_GRAFANA_WORKSPACE_ID.grafana-workspace.us-east-1.amazonaws.com/d/bifrost-gateway-main/bifrost-ai-gateway-team-observability` |
+| **SSO user (Grafana admin)** | `YOUR_SSO_USERNAME` (ID: `YOUR_SSO_USER_ID`) |
+| **CloudWatch datasource** | UID `YOUR_DATASOURCE_UID`, name `CloudWatch-Bifrost` |
+| **AMP workspace** | `YOUR_AMP_WORKSPACE_ID` (created, not yet wired to ADOT) |
 
 ### SSM Parameters (in account)
 
@@ -61,8 +61,8 @@ You built a **production-grade AI Gateway** on AWS using [Bifrost](https://githu
 | `/bifrost/encryption-key` | Bifrost 32-char config encryption key |
 | `/bifrost/virtual-keys/team-alpha` | Team Alpha virtual key value (SSM SecureString) |
 | `/bifrost/virtual-keys/team-beta` | Team Beta virtual key value (SSM SecureString) |
-| `/bifrost/live-keys/team-alpha` | `sk-bf-63643511-2192-4b81-8acf-6b9a0cef92e5` |
-| `/bifrost/live-keys/team-beta` | `sk-bf-863a4b59-cfeb-4d7d-bfc9-da257d687177` |
+| `/bifrost/live-keys/team-alpha` | `sk-bf-XXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX` |
+| `/bifrost/live-keys/team-beta` | `sk-bf-YYYYY-YYYY-YYYY-YYYY-YYYYYYYYYYYY` |
 | `/bifrost/api-endpoint` | CloudFront URL |
 
 ### CloudWatch
@@ -82,8 +82,8 @@ You built a **production-grade AI Gateway** on AWS using [Bifrost](https://githu
 | Item | Value |
 |---|---|
 | **Repo** | `https://github.com/aws-samples/sample-mcp-gateway-rbac-with-bedrock-agentcore` |
-| **Your fork** | `https://github.com/talroze/sample-mcp-gateway-rbac-with-bedrock-agentcore` |
-| **Write access** | Yes — talroze has write access to aws-samples repo directly |
+| **Your fork** | `https://github.com/YOUR_GITHUB_USER/sample-mcp-gateway-rbac-with-bedrock-agentcore` |
+| **Write access** | Yes — YOUR_ALIAS has write access to aws-samples repo directly |
 
 ### Branch State
 
@@ -124,8 +124,8 @@ You built a **production-grade AI Gateway** on AWS using [Bifrost](https://githu
 Internet (HTTPS)
       │
       ▼
-CloudFront (E1MAAFJGS8IKCJ)
-dlnn8ddmivrs6.cloudfront.net
+CloudFront (YOUR_CF_DISTRIBUTION_ID)
+YOUR_CLOUDFRONT_DOMAIN.cloudfront.net
       │  VPC Origin
       │
       ├── /* ──────────────► Bifrost Admin UI  (internal ALB → ECS)
@@ -146,8 +146,8 @@ ECS Fargate — bifrost-service (private subnet, 1 task, 1 vCPU / 3 GB)
 Lambda: bifrost-quota-publisher
   Runs every 5 min → CloudWatch metric QuotaUtilisationPct per team
 
-Amazon Managed Grafana (g-aa3e631ca3)
-  Datasource: CloudWatch-Bifrost (dfr70yol68mwwe)
+Amazon Managed Grafana (YOUR_GRAFANA_WORKSPACE_ID)
+  Datasource: CloudWatch-Bifrost (YOUR_DATASOURCE_UID)
   Dashboard: bifrost-gateway-main
 ```
 
@@ -203,7 +203,7 @@ aws ecs describe-services --cluster bifrost-cluster --services bifrost-service \
   --query 'services[0].{Status:status,Running:runningCount,Desired:desiredCount}' --output table
 
 # Check health endpoint
-curl -s https://dlnn8ddmivrs6.cloudfront.net/health
+curl -s https://YOUR_CLOUDFRONT_DOMAIN.cloudfront.net/health
 
 # Check CloudWatch has recent metrics (last 24h)
 aws cloudwatch get-metric-statistics \
@@ -220,7 +220,7 @@ aws cloudformation describe-stacks --query \
 ### Step 3 — Check GitHub for changes since last session
 
 ```bash
-cd /Users/talroze/git/sample-mcp-gateway-rbac-with-bedrock-agentcore
+cd /path/to/your/local/repo
 git fetch origin
 git -P log --oneline origin/main -10
 # Check if PR #14 was merged
@@ -243,14 +243,14 @@ ALPHA_KEY=$(aws ssm get-parameter --name /bifrost/live-keys/team-alpha \
   --query Parameter.Value --output text)
 
 # Send test request
-curl -s https://dlnn8ddmivrs6.cloudfront.net/v1/chat/completions \
+curl -s https://YOUR_CLOUDFRONT_DOMAIN.cloudfront.net/v1/chat/completions \
   -H "Authorization: Bearer $ALPHA_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"us.anthropic.claude-haiku-4-5-20251001-v1:0","messages":[{"role":"user","content":"ping"}],"max_tokens":10}'
 ```
 
 If this returns an error about unknown virtual key → keys were lost on restart. Re-configure:
-1. Open Admin UI: `https://dlnn8ddmivrs6.cloudfront.net`
+1. Open Admin UI: `https://YOUR_CLOUDFRONT_DOMAIN.cloudfront.net`
 2. Add Bedrock provider (IAM Role, region us-east-1)
 3. Create virtual key `team-alpha` (Haiku + Sonnet, 100K tokens/day)
 4. Create virtual key `team-beta` (Haiku only, 50K tokens/day)
@@ -261,7 +261,7 @@ If this returns an error about unknown virtual key → keys were lost on restart
    ```
 
 ### Step 7 — Validate Grafana dashboard
-1. Open `https://g-aa3e631ca3.grafana-workspace.us-east-1.amazonaws.com/d/bifrost-gateway-main`
+1. Open `https://YOUR_GRAFANA_WORKSPACE_ID.grafana-workspace.us-east-1.amazonaws.com/d/bifrost-gateway-main`
 2. Check panels show data (may need to send traffic first — see Step 6)
 
 ---
@@ -276,7 +276,7 @@ These were planned but not completed. Pick up any of these on resumption:
 | HIGH | Test CDK fresh deploy | `cdk synth` + optionally `cdk deploy` to a clean account |
 | MED | Fix ADOT sidecar OOM | Increase task to 2048 CPU / 4096 MB, re-add ADOT, wire to AMP |
 | MED | Validate EFS persistence | Confirm SQLite survives ECS task restart (EFS mount is configured) |
-| MED | Wire AMP to Grafana | Add AMP datasource in Grafana (`ws-d729248f-bacd-4bd1-a20d-d2bcc21c2ea1`) |
+| MED | Wire AMP to Grafana | Add AMP datasource in Grafana (`YOUR_AMP_WORKSPACE_ID`) |
 | LOW | `update-chatbox-keys.sh` test | Verify the script correctly patches and uploads chat.html |
 | LOW | Pin Bifrost version | Change `maximhq/bifrost:latest` to a specific tag in CDK |
 | LOW | Add WAF to CloudFront | Rate limiting on `/v1/*` endpoint |
@@ -287,7 +287,7 @@ These were planned but not completed. Pick up any of these on resumption:
 
 | Item | Location |
 |---|---|
-| **Git repo** | `/Users/talroze/git/sample-mcp-gateway-rbac-with-bedrock-agentcore` |
+| **Git repo** | `/path/to/your/local/repo` |
 | **Active branch** | `Bifrost-implementation` |
 | **Encryption key file** | `bifrost-implementation/scripts/.bifrost-key` (gitignored, local only) |
 | **CDK node_modules** | NOT installed — run `npm install` in `bifrost-implementation/cdk/` before CDK commands |
@@ -328,8 +328,8 @@ aws cloudformation delete-stack --stack-name bifrost-gw-vpc --region us-east-1
 | Resource | How to Access |
 |---|---|
 | **AWS** | Isengard short-lived credentials (paste into terminal, valid ~10 min) |
-| **Admin UI** | `https://dlnn8ddmivrs6.cloudfront.net` (Cognito login with your email) |
-| **Grafana** | `https://g-aa3e631ca3.grafana-workspace.us-east-1.amazonaws.com` (SSO: talrozedemo) |
+| **Admin UI** | `https://YOUR_CLOUDFRONT_DOMAIN.cloudfront.net` (Cognito login with your email) |
+| **Grafana** | `https://YOUR_GRAFANA_WORKSPACE_ID.grafana-workspace.us-east-1.amazonaws.com` (SSO: YOUR_SSO_USERNAME) |
 | **GitHub** | Personal Access Token — stored in your local git remote config. If pushing fails after 1 month, regenerate at: github.com → Settings → Developer settings → Personal access tokens → Tokens (classic) |
 
 > ⚠️ The GitHub token above may expire. If pushing fails, regenerate at github.com → Settings → Developer settings → Personal access tokens.
