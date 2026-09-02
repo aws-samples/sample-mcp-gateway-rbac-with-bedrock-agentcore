@@ -11,13 +11,18 @@ services:
       - "4000:4000"
     volumes:
       - ./config.yaml:/app/config.yaml
+      # Option B: mount host AWS config/credentials read-only.
+      # The container reads the AWS_PROFILE below instead of hardcoded keys.
+      - ${HOME}/.aws:/root/.aws:ro
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-demo-master-key}
       - DATABASE_URL=postgresql://litellm:litellm@postgres:5432/litellm
       - REDIS_HOST=redis
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+      # Use a STATIC profile (no credential_process) that refresh-aws-creds.sh
+      # populates from your real 'bedrock' profile on the host.
+      # Pinned (not ${AWS_PROFILE}) so a host shell AWS_PROFILE can't leak in
+      # and point the container at a credential_process it can't run.
+      - AWS_PROFILE=bedrock-static
       - AWS_REGION=${AWS_REGION:-us-east-1}
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     depends_on:
