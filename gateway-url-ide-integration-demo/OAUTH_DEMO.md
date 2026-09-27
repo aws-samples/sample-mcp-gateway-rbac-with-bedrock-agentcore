@@ -55,9 +55,27 @@ This is the **OAuth path** of the demo. Compared to the IAM/SigV4 path (which us
 5. Create users with `custom:team` set to your team names
 6. Update Cedar policies to read `principal.getTag("team")` instead of `principal.getTag("group")`
 
-See `infrastructure/cloudformation/oauth-registry-stack.yaml` for a reference
-CloudFormation template that does all of this. It's not wired into `deploy.sh`
-by default to avoid exposing credentials in terminal output.
+The file `infrastructure/cloudformation/oauth-registry-stack.yaml` is a ready-to-deploy
+CloudFormation template that does all of this. Deploy it with the AWS CLI:
+
+```bash
+aws cloudformation deploy \
+  --template-file infrastructure/cloudformation/oauth-registry-stack.yaml \
+  --stack-name mcp-gateway-oauth \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides \
+      Prefix=mcp-demo \
+      AdminEmail=yourname@example.com
+```
+
+After the stack creates, note the UserPoolId and UserPoolClientId outputs. Pass them to
+create-gateway-oauth.py (see below). The template is not wired into deploy.sh by default
+to avoid exposing credentials in terminal output.
+
+> **Using Entra ID, Okta, or another corporate IdP instead of Cognito?**
+> You do not need to deploy this stack. See [ENTRA_ID_OAUTH.md](ENTRA_ID_OAUTH.md) for a
+> complete step-by-step guide covering App Registration setup, the team claim mapping,
+> the exact VS Code mcp.json configuration, and a Cedar policy example for Entra groups.
 
 ---
 
@@ -175,11 +193,19 @@ VS Code + Cognito may cache the OAuth token/cookie. To cleanly switch users, use
 1. Create Cognito users with `custom:team = YourTeam`
 2. Add Cedar permits for the new team in `setup-cedar-oauth.py`
 
-### Use your own IdP
-Replace the Cognito pool with your enterprise IdP (Okta, Azure AD, etc.):
-1. Update the gateway's `issuerUrl` to your IdP's OIDC issuer
-2. Ensure the JWT contains a `team` (or `squad`, `group`) claim
-3. Update Cedar policies to match the claim name
+### Use your own IdP (Entra ID, Okta, etc.)
+Replace the Cognito pool with your enterprise IdP. The gateway accepts any
+OIDC-compliant issuer. See [ENTRA_ID_OAUTH.md](ENTRA_ID_OAUTH.md) for a complete
+Entra ID walkthrough including App Registration setup, team claim mapping, the
+mcp-oauth.json VS Code config, and Cedar policy examples.
+
+The short version for any IdP:
+
+1. Update the `issuerUrl` in create-gateway-oauth.py to your IdP's OIDC issuer URL
+2. Register the three VS Code redirect URIs on the IdP App Registration (http://127.0.0.1:33418, http://localhost:33418, vscode://vscode.github-authentication/did-authenticate)
+3. Ensure the JWT access token contains a `team` (or `groups`) claim
+4. Update Cedar policies to match the claim name your IdP uses
+5. Fill in vscode-config/mcp-oauth.json with your IdP's authorization and token endpoints
 
 ### Connect to AWS Agent Registry (preview)
 When AWS Agent Registry GAs, your Lambda can source the catalog from it instead of a static list — one-line change, same URL for Copilot.

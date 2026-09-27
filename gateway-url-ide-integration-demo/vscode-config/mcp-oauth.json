@@ -1,0 +1,16 @@
+{
+  "servers": {
+    "mcp-gateway": {
+      "url": "REPLACE_WITH_YOUR_GATEWAY_URL",
+      "description": "Centrally governed MCP gateway. Tools available depend on your team membership.",
+      "authorization": {
+        "type": "oauth",
+        "clientId": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "authorizationEndpoint": "REPLACE_WITH_YOUR_AUTHORIZATION_ENDPOINT",
+        "tokenEndpoint": "REPLACE_WITH_YOUR_TOKEN_ENDPOINT",
+        "scopes": ["openid", "email", "profile"],
+        "redirectUri": "http://127.0.0.1:33418"
+      }
+    }
+  }
+}
