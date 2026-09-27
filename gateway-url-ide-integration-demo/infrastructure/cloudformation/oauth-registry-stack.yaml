@@ -68,28 +68,11 @@ Resources:
           def handler(event, context):
               """
               Cognito pre-token-generation V2 trigger.
-              Copies the custom:team attribute into claimsAndScopeOverrideDetails
-              so the claim is present in both the access token and the ID token.
+              userAttributes is always a dict in the V2 event shape.
+              Copies custom:team into the access and ID tokens so Cedar
+              policies can read it via principal.getTag("team").
               """
-              user_attrs = {
-                  a["Name"]: a["Value"]
-                  for a in event.get("request", {}).get("userAttributes", {}).items()
-              } if isinstance(
-                  event.get("request", {}).get("userAttributes", {}), dict
-              ) else {
-                  a["Name"]: a["Value"]
-                  for a in event["request"].get("userAttributes", [])
-              }
-
-              # Flatten dict-of-dicts vs list-of-dicts from Cognito
-              if isinstance(event["request"].get("userAttributes"), dict):
-                  attrs = event["request"]["userAttributes"]
-              else:
-                  attrs = {
-                      a["Name"]: a["Value"]
-                      for a in event["request"].get("userAttributes", [])
-                  }
-
+              attrs = event.get("request", {}).get("userAttributes", {})
               team = attrs.get("custom:team", "")
 
               event.setdefault("response", {})
