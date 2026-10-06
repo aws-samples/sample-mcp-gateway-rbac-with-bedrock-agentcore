@@ -158,7 +158,7 @@ Open the copied file and fill in your values:
         "clientId": "YOUR_ENTRA_CLIENT_ID",
         "authorizationEndpoint": "https://login.microsoftonline.com/YOUR_TENANT_ID/oauth2/v2.0/authorize",
         "tokenEndpoint": "https://login.microsoftonline.com/YOUR_TENANT_ID/oauth2/v2.0/token",
-        "scopes": ["openid", "email", "profile", "api://YOUR_ENTRA_CLIENT_ID/.default"],
+        "scopes": ["api://YOUR_ENTRA_CLIENT_ID/.default"],
         "redirectUri": "http://127.0.0.1:33418"
       }
     }
@@ -166,12 +166,12 @@ Open the copied file and fill in your values:
 }
 ```
 
-The "url" value is the gateway URL output by create-gateway-oauth.py.
-
-The scopes list must include "openid" for the OIDC flow to work. The
-"api://YOUR_ENTRA_CLIENT_ID/.default" scope requests all application permissions
-defined on the App Registration and is required for the access token to carry your
-team claim.
+The scopes list must contain only `api://YOUR_ENTRA_CLIENT_ID/.default`. Do NOT include
+`openid`, `email`, or `profile` alongside it. Mixing OpenID scopes with an application
+scope on the v2.0 endpoint causes Entra to add a legacy `resource` parameter to the
+authorization request, which produces the `AADSTS9010010` error. The `.default` scope
+alone requests all permissions defined on the App Registration and causes Entra to
+include the necessary `openid` claims automatically in the token.
 
 ---
 
@@ -188,6 +188,24 @@ before anything else.
 ---
 
 ## Troubleshooting checklist
+
+**"AADSTS9010010: The resource parameter provided in the request doesn't match with the requested scopes"**
+
+This is the most common error when connecting VS Code or any MCP client to a gateway secured with Entra ID. The cause is a conflict between OAuth2 v1 and v2 conventions.
+
+The AgentCore gateway's `/.well-known/oauth-protected-resource` metadata includes a `resource` field containing the gateway URL. Some OAuth clients (including certain versions of VS Code and MSAL-based tools) read this field and send it as a legacy `resource` parameter alongside the v2 `scope` parameter. The Entra v2.0 token endpoint rejects requests that contain both.
+
+There are two ways to trigger this. The first is having `openid`, `email`, or `profile` in the scopes list alongside `api://CLIENT_ID/.default`. The Entra v2 endpoint treats them as belonging to different resource contexts, which causes it to inject the `resource` parameter internally. The second is using an MSAL client that reads the `resourceUrl` field from the server's OAuth discovery response and adds it as `resource` automatically.
+
+The fix is to use only `api://YOUR_ENTRA_CLIENT_ID/.default` as the scope in `mcp.json` and remove all other scopes:
+
+```json
+"scopes": ["api://YOUR_ENTRA_CLIENT_ID/.default"]
+```
+
+Do not include `openid`, `email`, or `profile` in the scopes array. The `.default` scope alone is sufficient and Entra will include the standard OIDC claims in the token automatically.
+
+If you are using a C# client or the Microsoft Dev Toolkit and are receiving a Graph API v1 token instead of your App Registration token, this means the client is requesting the Microsoft Graph resource (`https://graph.microsoft.com`) rather than your App Registration. Make sure the scope points to your App Registration (`api://YOUR_CLIENT_ID/.default`) and not to any Microsoft Graph endpoint.
 
 **"AADSTS50011: The redirect URI does not match"**
 

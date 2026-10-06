@@ -6,9 +6,9 @@
       "authorization": {
         "type": "oauth",
         "clientId": "REPLACE_WITH_YOUR_CLIENT_ID",
-        "authorizationEndpoint": "REPLACE_WITH_YOUR_AUTHORIZATION_ENDPOINT",
-        "tokenEndpoint": "REPLACE_WITH_YOUR_TOKEN_ENDPOINT",
-        "scopes": ["openid", "email", "profile"],
+        "authorizationEndpoint": "https://login.microsoftonline.com/REPLACE_WITH_YOUR_TENANT_ID/oauth2/v2.0/authorize",
+        "tokenEndpoint": "https://login.microsoftonline.com/REPLACE_WITH_YOUR_TENANT_ID/oauth2/v2.0/token",
+        "scopes": ["api://REPLACE_WITH_YOUR_CLIENT_ID/.default"],
         "redirectUri": "http://127.0.0.1:33418"
       }
     }
