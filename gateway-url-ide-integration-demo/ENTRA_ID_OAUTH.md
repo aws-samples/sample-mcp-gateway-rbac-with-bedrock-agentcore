@@ -191,19 +191,52 @@ before anything else.
 
 **"AADSTS9010010: The resource parameter provided in the request doesn't match with the requested scopes"**
 
-This is the most common error when connecting VS Code or any MCP client to a gateway secured with Entra ID. The cause is a conflict between OAuth2 v1 and v2 conventions.
+This error means VS Code is sending both a `scope` parameter and a `resource` parameter in the same token request to Entra. The Entra v2.0 endpoint rejects this combination.
 
-The AgentCore gateway's `/.well-known/oauth-protected-resource` metadata includes a `resource` field containing the gateway URL. Some OAuth clients (including certain versions of VS Code and MSAL-based tools) read this field and send it as a legacy `resource` parameter alongside the v2 `scope` parameter. The Entra v2.0 token endpoint rejects requests that contain both.
+The root cause is the AgentCore Gateway's `/.well-known/oauth-protected-resource` response. It contains a `resource` field with the gateway URL. VS Code reads this endpoint when it first connects to any MCP server and extracts the `resource` field per RFC 9728. It then sends this value as a `resource` parameter in every token request, regardless of what scopes you have configured in `mcp.json`. There is nothing you can change in `mcp.json` alone to prevent this.
 
-There are two ways to trigger this. The first is having `openid`, `email`, or `profile` in the scopes list alongside `api://CLIENT_ID/.default`. The Entra v2 endpoint treats them as belonging to different resource contexts, which causes it to inject the `resource` parameter internally. The second is using an MSAL client that reads the `resourceUrl` field from the server's OAuth discovery response and adds it as `resource` automatically.
+The fix is a small local proxy that intercepts the `/.well-known/oauth-protected-resource` response and removes the `resource` field before VS Code sees it.
 
-The fix is to use only `api://YOUR_ENTRA_CLIENT_ID/.default` as the scope in `mcp.json` and remove all other scopes:
+**Step 1: Install dependencies**
 
-```json
-"scopes": ["api://YOUR_ENTRA_CLIENT_ID/.default"]
+```bash
+pip install flask requests
 ```
 
-Do not include `openid`, `email`, or `profile` in the scopes array. The `.default` scope alone is sufficient and Entra will include the standard OIDC claims in the token automatically.
+**Step 2: Start the proxy**
+
+```bash
+GATEWAY_URL=https://YOUR_GATEWAY_ID.gateway.bedrock-agentcore.YOUR_REGION.amazonaws.com/mcp \
+python3 npm-package/customer-gateway-proxy/bin/oauth-proxy.py
+```
+
+The proxy starts on `http://localhost:8080` by default. To use a different port set `PORT=9090`.
+
+**Step 3: Point VS Code at the proxy instead of the gateway**
+
+Update `mcp.json` to use the proxy URL:
+
+```json
+{
+  "servers": {
+    "mcp-gateway": {
+      "url": "http://localhost:8080",
+      "authorization": {
+        "type": "oauth",
+        "clientId": "YOUR_ENTRA_CLIENT_ID",
+        "authorizationEndpoint": "https://login.microsoftonline.com/YOUR_TENANT_ID/oauth2/v2.0/authorize",
+        "tokenEndpoint": "https://login.microsoftonline.com/YOUR_TENANT_ID/oauth2/v2.0/token",
+        "scopes": ["api://YOUR_ENTRA_CLIENT_ID/.default"],
+        "redirectUri": "http://127.0.0.1:33418"
+      }
+    }
+  }
+}
+```
+
+VS Code connects to the proxy on localhost, gets the cleaned metadata without the `resource` field, completes the Entra auth flow correctly, and the proxy forwards all tool calls to the real gateway with the Authorization header intact.
+
+The proxy source is at `npm-package/customer-gateway-proxy/bin/oauth-proxy.py` and includes inline documentation explaining what it does and why.
 
 If you are using a C# client or the Microsoft Dev Toolkit and are receiving a Graph API v1 token instead of your App Registration token, this means the client is requesting the Microsoft Graph resource (`https://graph.microsoft.com`) rather than your App Registration. Make sure the scope points to your App Registration (`api://YOUR_CLIENT_ID/.default`) and not to any Microsoft Graph endpoint.
 
