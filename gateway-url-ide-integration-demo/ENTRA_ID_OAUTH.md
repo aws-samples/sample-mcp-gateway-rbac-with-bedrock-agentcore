@@ -130,7 +130,56 @@ OIDC discovery document automatically.
 
 ---
 
-## Step 4: Configure VS Code
+## Enterprise-Managed Authentication (Recommended for organizations)
+
+VS Code has a built-in enterprise authentication mode designed exactly for this scenario. It uses **OAuth Identity Assertion Authorization Grant (ID-JAG)** to obtain tokens through your organization's SSO without per-developer proxy setup and without triggering the `/.well-known/oauth-protected-resource` discovery that causes `AADSTS9010010`.
+
+This approach requires a `settings.json` change deployed once by IT or Group Policy, and a one-line change in `mcp.json`. After a single sign-in, subsequent connections are silent.
+
+### Step A: Configure the IdP in VS Code settings
+
+Add this to `settings.json` on each developer machine (or deliver it via Group Policy or MDM):
+
+```json
+{
+  "mcp.enterpriseManagedAuth.idp": {
+    "issuer": "https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0",
+    "clientId": "YOUR_ENTRA_CLIENT_ID"
+  }
+}
+```
+
+This setting is hidden from the Settings UI by design. It is intended to be delivered through enterprise policy (Windows Group Policy, macOS managed preferences, or Linux `/etc/vscode/policy.json`) so developers never need to configure it manually. For testing, add it directly to `settings.json`.
+
+### Step B: Configure mcp.json
+
+```json
+{
+  "servers": {
+    "mcp-gateway": {
+      "url": "YOUR_AGENTCORE_GATEWAY_URL",
+      "oauth": {
+        "clientId": "YOUR_ENTRA_CLIENT_ID",
+        "enterpriseManaged": true
+      }
+    }
+  }
+}
+```
+
+The `authorization` block is replaced with an `oauth` block containing only `clientId` and `enterpriseManaged: true`. VS Code reads the IdP configuration from `settings.json` rather than from the server's `/.well-known` metadata, bypassing the `resource` parameter problem entirely. The gateway URL is the direct AgentCore gateway URL, not a proxy.
+
+### Why this works
+
+The standard VS Code OAuth flow fetches `/.well-known/oauth-protected-resource` from the server, reads the `resource` field, and passes it into the Entra token request causing `AADSTS9010010`. The enterprise-managed flow skips that discovery entirely. It goes directly to the issuer configured in `mcp.enterpriseManagedAuth.idp` using ID-JAG, so no `resource` parameter is ever added and no local proxy is needed.
+
+### For organization-wide rollout
+
+Deliver `mcp.enterpriseManagedAuth.idp` through your MDM or Group Policy system. Developers only need the `mcp.json` change — the IdP configuration is pushed automatically. The setting value is the JSON object from Step A above.
+
+---
+
+## Step 4: Configure VS Code (standard OAuth — use this only if enterprise policy is not available)
 
 Copy the OAuth config template to your VS Code user settings directory:
 
