@@ -1,0 +1,304 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Walkie MCP Gateway OAuth Stack.
+  Provisions a Cognito User Pool (with a custom:team attribute and a pre-token
+  Lambda trigger that injects the team claim), an App Client pre-registered with
+  the VS Code redirect URIs, and a Registry Lambda + API Gateway that serves
+  the MCP Registry v0.1 spec.  After deploying this stack run
+  create-gateway-oauth.py and setup-cedar-oauth.py to wire AgentCore.
+  If you are using an external IdP (Entra ID, Okta, etc.) you do NOT need this
+  stack. See ENTRA_ID_OAUTH.md for the external-IdP path.
+
+Parameters:
+  Prefix:
+    Type: String
+    Default: mcp-demo
+    Description: Short prefix applied to all resource names.
+  AdminEmail:
+    Type: String
+    Description: Email address for the first admin user (receives a temporary password).
+  GatewayUrl:
+    Type: String
+    Default: ""
+    Description: >
+      AgentCore Gateway URL.  Leave blank during initial deploy; update the
+      parameter after running create-gateway-oauth.py so the Registry Lambda
+      can return the correct URL to VS Code.
+
+Conditions:
+  HasGatewayUrl: !Not [!Equals [!Ref GatewayUrl, ""]]
+
+Resources:
+
+  # ── Pre-token Lambda (injects custom:team into access token) ──────────────
+
+  PreTokenLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Prefix}-pre-token-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Tags:
+        - Key: builder
+          Value: walkie
+        - Key: auto-delete
+          Value: "no"
+
+  PreTokenLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Prefix}-pre-token"
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt PreTokenLambdaRole.Arn
+      Timeout: 5
+      Description: >
+        Cognito pre-token trigger.  Copies the custom:team user attribute into
+        the access token as a top-level "team" claim so Cedar policies can read
+        it via principal.getTag("team").
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              """
+              Cognito pre-token-generation V2 trigger.
+              userAttributes is always a dict in the V2 event shape.
+              Copies custom:team into the access and ID tokens so Cedar
+              policies can read it via principal.getTag("team").
+              """
+              attrs = event.get("request", {}).get("userAttributes", {})
+              team = attrs.get("custom:team", "")
+
+              event.setdefault("response", {})
+              event["response"]["claimsAndScopeOverrideDetails"] = {
+                  "accessTokenGeneration": {
+                      "claimsToAddOrOverride": {"team": team}
+                  },
+                  "idTokenGeneration": {
+                      "claimsToAddOrOverride": {"team": team}
+                  },
+              }
+              return event
+      Tags:
+        - Key: builder
+          Value: walkie
+        - Key: auto-delete
+          Value: "no"
+
+  PreTokenLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt PreTokenLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  # ── Cognito User Pool ──────────────────────────────────────────────────────
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${Prefix}-users"
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Schema:
+        - Name: team
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+      LambdaConfig:
+        PreTokenGenerationConfig:
+          LambdaArn: !GetAtt PreTokenLambda.Arn
+          LambdaVersion: V2_0
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UserPoolTags:
+        builder: walkie
+        auto-delete: "no"
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub "${Prefix}-${AWS::AccountId}"
+      UserPoolId: !Ref UserPool
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${Prefix}-vscode-client"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      AllowedOAuthFlowsUserPoolClient: true
+      CallbackURLs:
+        # VS Code OAuth redirect URIs — all three must be present
+        - http://127.0.0.1:33418
+        - http://localhost:33418
+        - vscode://vscode.github-authentication/did-authenticate
+      SupportedIdentityProviders:
+        - COGNITO
+
+  # ── Registry Lambda ────────────────────────────────────────────────────────
+
+  RegistryLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Prefix}-registry-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Tags:
+        - Key: builder
+          Value: walkie
+        - Key: auto-delete
+          Value: "no"
+
+  RegistryLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Prefix}-registry"
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt RegistryLambdaRole.Arn
+      Timeout: 10
+      Description: >
+        Returns an MCP Registry v0.1 response so VS Code / GitHub Copilot can
+        discover the gateway.  The GATEWAY_URL environment variable is set to
+        the AgentCore Gateway URL.  Update it after running create-gateway-oauth.py.
+      Environment:
+        Variables:
+          GATEWAY_URL: !If [HasGatewayUrl, !Ref GatewayUrl, "PLACEHOLDER_UPDATE_AFTER_GATEWAY_CREATION"]
+      Code:
+        ZipFile: |
+          import json
+          import os
+
+          GATEWAY_URL = os.environ.get("GATEWAY_URL", "")
+
+          def handler(event, context):
+              """
+              MCP Registry v0.1 response.
+              GitHub Copilot and VS Code both POST to /servers when they fetch
+              the registry; we return the same shape on GET for easy testing.
+              """
+              body = {
+                  "servers": [
+                      {
+                          "id": "mcp-gateway",
+                          "name": "MCP Gateway",
+                          "description": (
+                              "Centrally governed MCP gateway with Cedar RBAC. "
+                              "Tools available depend on your team membership."
+                          ),
+                          "url": GATEWAY_URL,
+                          "version": "1.0.0",
+                          "authorization": {
+                              "type": "oauth2",
+                              "flows": {
+                                  "authorizationCode": {
+                                      "authorizationUrl": os.environ.get("AUTH_URL", ""),
+                                      "tokenUrl": os.environ.get("TOKEN_URL", ""),
+                                      "scopes": {
+                                          "openid": "OpenID Connect",
+                                          "profile": "User profile",
+                                          "email": "Email address",
+                                      },
+                                  }
+                              },
+                          },
+                      }
+                  ]
+              }
+              return {
+                  "statusCode": 200,
+                  "headers": {
+                      "Content-Type": "application/json",
+                      "Access-Control-Allow-Origin": "*",
+                  },
+                  "body": json.dumps(body),
+              }
+      Tags:
+        - Key: builder
+          Value: walkie
+        - Key: auto-delete
+          Value: "no"
+
+  RegistryLambdaUrlConfig:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt RegistryLambda.Arn
+      AuthType: NONE
+      Cors:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+        AllowHeaders:
+          - "*"
+
+  RegistryLambdaUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt RegistryLambda.Arn
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+Outputs:
+
+  UserPoolId:
+    Description: Cognito User Pool ID — pass to create-gateway-oauth.py as --cognito-pool-id
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub "${Prefix}-UserPoolId"
+
+  UserPoolClientId:
+    Description: Cognito App Client ID — pass to create-gateway-oauth.py as --cognito-client-id
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub "${Prefix}-UserPoolClientId"
+
+  CognitoIssuerUrl:
+    Description: OIDC issuer URL — used by AgentCore Gateway customJWTAuthorization.issuerUrl
+    Value: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+
+  CognitoLoginUrl:
+    Description: Hosted UI login URL for manual testing
+    Value: !Sub
+      - "https://${Prefix}-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com/login?client_id=${ClientId}&response_type=code&scope=openid+email+profile&redirect_uri=http://127.0.0.1:33418"
+      - ClientId: !Ref UserPoolClient
+
+  RegistryLambdaUrl:
+    Description: Registry URL — paste into GitHub Copilot MCP Registry URL field
+    Value: !GetAtt RegistryLambdaUrlConfig.FunctionUrl
+    Export:
+      Name: !Sub "${Prefix}-RegistryUrl"
+
+  RegistryLambdaArn:
+    Description: Registry Lambda ARN
+    Value: !GetAtt RegistryLambda.Arn
+    Export:
+      Name: !Sub "${Prefix}-RegistryLambdaArn"

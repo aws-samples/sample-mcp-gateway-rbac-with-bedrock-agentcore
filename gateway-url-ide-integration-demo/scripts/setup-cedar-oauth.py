@@ -73,29 +73,33 @@ def main():
     client = boto3.client('bedrock-agentcore-control', region_name=args.region)
 
     # ── Find the gateway ──
-    gateways = client.list_gateways().get('gateways', [])
+    resp = client.list_gateways()
+    gateways = resp.get('items', resp.get('gateways', []))
     gw = next((g for g in gateways if g.get('name') == f"{args.prefix}-gateway-jwt"), None)
     if not gw:
         print("❌ Gateway not found. Run create-gateway.py first.", file=sys.stderr)
         sys.exit(1)
 
     gateway_id = gw['gatewayId']
-    gateway_arn = gw.get('arn', f"arn:aws:bedrock-agentcore:{args.region}:{args.account_id}:gateway/{gateway_id}")
+    # Fetch full details to get the ARN (list response doesn't include it)
+    gw_detail = client.get_gateway(gatewayIdentifier=gateway_id)
+    gateway_arn = gw_detail.get('gatewayArn', f"arn:aws:bedrock-agentcore:{args.region}:{args.account_id}:gateway/{gateway_id}")
 
     # ── Create or find policy engine ──
-    engine_name = f"{args.prefix}-policies"
-    engines = client.list_policy_engines().get('policyEngines', [])
+    engine_name = f"{args.prefix.replace('-','_')}_policies"
+    pe_resp = client.list_policy_engines()
+    engines = pe_resp.get('policyEngines', pe_resp.get('items', []))
     engine = next((e for e in engines if e.get('name') == engine_name), None)
 
     if not engine:
         resp = client.create_policy_engine(name=engine_name)
-        engine_id = resp['policyEngineId']
-        engine_arn = resp.get('arn', f"arn:aws:bedrock-agentcore:{args.region}:{args.account_id}:policy-engine/{engine_id}")
+        engine_id = resp.get('policyEngineId', resp.get('id',''))
+        engine_arn = resp.get('arn', resp.get('policyEngineArn', f"arn:aws:bedrock-agentcore:{args.region}:{args.account_id}:policy-engine/{engine_id}"))
         print(f"  Created policy engine: {engine_name}")
         time.sleep(3)
     else:
-        engine_id = engine['policyEngineId']
-        engine_arn = engine.get('arn', f"arn:aws:bedrock-agentcore:{args.region}:{args.account_id}:policy-engine/{engine_id}")
+        engine_id = engine.get('policyEngineId', engine.get('id',''))
+        engine_arn = engine.get('arn', engine.get('policyEngineArn', f"arn:aws:bedrock-agentcore:{args.region}:{args.account_id}:policy-engine/{engine_id}"))
         print(f"  Using existing policy engine: {engine_name}")
 
     # ── Create policies ──
@@ -105,7 +109,8 @@ def main():
             client.create_policy(
                 policyEngineId=engine_id,
                 name=name,
-                definition={'cedar': {'statement': cedar}}
+                definition={'cedar': {'statement': cedar}},
+                enforcementMode='ENFORCED'
             )
             print(f"  ✅ Policy: {name}")
         except Exception as e:
@@ -116,10 +121,14 @@ def main():
 
     # ── Bind engine to gateway (ENFORCE mode) ──
     try:
+        gw_cfg = client.get_gateway(gatewayIdentifier=gateway_id)
         client.update_gateway(
-            gatewayId=gateway_id,
+            gatewayIdentifier=gateway_id,
+            name=gw_cfg['name'],
+            roleArn=gw_cfg['roleArn'],
+            authorizerType=gw_cfg['authorizerType'],
             policyEngineConfiguration={
-                'policyEngineArn': engine_arn,
+                'arn': engine_arn,
                 'mode': 'ENFORCE'
             }
         )
