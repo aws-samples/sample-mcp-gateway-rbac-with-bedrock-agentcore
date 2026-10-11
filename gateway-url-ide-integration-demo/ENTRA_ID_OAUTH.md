@@ -130,52 +130,133 @@ OIDC discovery document automatically.
 
 ---
 
-## Enterprise-Managed Authentication (Recommended for organizations)
+## Connecting VS Code to the Gateway with Entra ID
 
-VS Code has a built-in enterprise authentication mode designed exactly for this scenario. It uses **OAuth Identity Assertion Authorization Grant (ID-JAG)** to obtain tokens through your organization's SSO without per-developer proxy setup and without triggering the `/.well-known/oauth-protected-resource` discovery that causes `AADSTS9010010`.
+There are two supported paths. Choose whichever fits your environment.
 
-This approach requires a `settings.json` change deployed once by IT or Group Policy, and a one-line change in `mcp.json`. After a single sign-in, subsequent connections are silent.
+---
 
-### Step A: Configure the IdP in VS Code settings
+### Option A: Cloud-hosted metadata relay (recommended — zero per-developer setup)
 
-Add this to `settings.json` on each developer machine (or deliver it via Group Policy or MDM):
+The AgentCore gateway's `/.well-known/oauth-protected-resource` response contains a `resource`
+field that causes Entra v2.0 to reject token requests with `AADSTS9010010`. This relay is a
+CloudFront distribution with a Lambda@Edge function that strips that field before VS Code sees it.
+Developers point `mcp.json` at the CloudFront URL. All authentication and tool calls go to the
+real gateway unchanged.
 
-```json
-{
-  "mcp.enterpriseManagedAuth.idp": {
-    "issuer": "https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0",
-    "clientId": "YOUR_ENTRA_CLIENT_ID"
-  }
-}
+**Deploy the relay (one-time, ~3 minutes):**
+
+```bash
+aws cloudformation deploy \
+  --template-file infrastructure/cloudformation/oauth-metadata-relay-stack.yaml \
+  --stack-name agentcore-oauth-relay \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides \
+    GatewayUrl=https://YOUR_GATEWAY_ID.gateway.bedrock-agentcore.YOUR_REGION.amazonaws.com/mcp
 ```
 
-This setting is hidden from the Settings UI by design. It is intended to be delivered through enterprise policy (Windows Group Policy, macOS managed preferences, or Linux `/etc/vscode/policy.json`) so developers never need to configure it manually. For testing, add it directly to `settings.json`.
+Note: the template creates a Lambda@Edge function. Lambda@Edge functions must be deployed
+in `us-east-1` regardless of where your gateway runs.
 
-### Step B: Configure mcp.json
+```bash
+aws cloudformation deploy \
+  --region us-east-1 \
+  --template-file infrastructure/cloudformation/oauth-metadata-relay-stack.yaml \
+  --stack-name agentcore-oauth-relay \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides \
+    GatewayUrl=https://YOUR_GATEWAY_ID.gateway.bedrock-agentcore.YOUR_REGION.amazonaws.com/mcp
+```
+
+**Get the relay URL:**
+
+```bash
+aws cloudformation describe-stacks \
+  --stack-name agentcore-oauth-relay \
+  --region us-east-1 \
+  --query 'Stacks[0].Outputs[?OutputKey==`RelayUrl`].OutputValue' \
+  --output text
+```
+
+**Configure mcp.json to use the relay URL:**
 
 ```json
 {
   "servers": {
     "mcp-gateway": {
-      "url": "YOUR_AGENTCORE_GATEWAY_URL",
-      "oauth": {
+      "url": "https://YOUR_CLOUDFRONT_DOMAIN.cloudfront.net",
+      "authorization": {
+        "type": "oauth",
         "clientId": "YOUR_ENTRA_CLIENT_ID",
-        "enterpriseManaged": true
+        "authorizationEndpoint": "https://login.microsoftonline.com/YOUR_TENANT_ID/oauth2/v2.0/authorize",
+        "tokenEndpoint": "https://login.microsoftonline.com/YOUR_TENANT_ID/oauth2/v2.0/token",
+        "scopes": ["api://YOUR_ENTRA_CLIENT_ID/.default"],
+        "redirectUri": "http://127.0.0.1:33418"
       }
     }
   }
 }
 ```
 
-The `authorization` block is replaced with an `oauth` block containing only `clientId` and `enterpriseManaged: true`. VS Code reads the IdP configuration from `settings.json` rather than from the server's `/.well-known` metadata, bypassing the `resource` parameter problem entirely. The gateway URL is the direct AgentCore gateway URL, not a proxy.
+Replace `YOUR_CLOUDFRONT_DOMAIN` with the value from the stack output. The gateway URL
+stays hidden — developers never need to know it.
 
-### Why this works
+---
 
-The standard VS Code OAuth flow fetches `/.well-known/oauth-protected-resource` from the server, reads the `resource` field, and passes it into the Entra token request causing `AADSTS9010010`. The enterprise-managed flow skips that discovery entirely. It goes directly to the issuer configured in `mcp.enterpriseManagedAuth.idp` using ID-JAG, so no `resource` parameter is ever added and no local proxy is needed.
+### Option B: File an AWS support case to fix the gateway
 
-### For organization-wide rollout
+The correct long-term fix is for AWS to remove or stop advertising the `resource` field in
+the AgentCore gateway's `/.well-known/oauth-protected-resource` response. That field is not
+required by the MCP specification and breaks Entra ID v2.0 compatibility for all customers
+using standard VS Code OAuth.
 
-Deliver `mcp.enterpriseManagedAuth.idp` through your MDM or Group Policy system. Developers only need the `mcp.json` change — the IdP configuration is pushed automatically. The setting value is the JSON object from Step A above.
+File a support case with the following information:
+
+**Service:** Amazon Bedrock AgentCore
+
+**Subject:** AgentCore Gateway oauth-protected-resource response breaks Entra ID v2.0 OAuth
+
+**Description:**
+
+> The AgentCore Gateway's `/.well-known/oauth-protected-resource` endpoint returns a `resource`
+> field containing the gateway URL (RFC 9728 §2). VS Code reads this field and sends it as a
+> legacy `resource` parameter in every token request to Entra ID's v2.0 token endpoint
+> (`/oauth2/v2.0/token`). The Entra v2.0 endpoint rejects any request that contains both
+> `scope` and `resource` parameters with `AADSTS9010010: The resource parameter provided in
+> the request doesn't match with the requested scopes`.
+>
+> The `resource` field in `oauth-protected-resource` is not required by the MCP specification
+> or by RFC 9728. Removing it or making it optional would restore Entra ID v2.0 compatibility
+> for all customers using VS Code with CUSTOM_JWT gateways.
+>
+> Gateway URL pattern affected:
+> `https://<id>.gateway.bedrock-agentcore.<region>.amazonaws.com/mcp`
+>
+> Verified by fetching:
+> `https://<id>.gateway.bedrock-agentcore.<region>.amazonaws.com/.well-known/oauth-protected-resource`
+>
+> Current response (problematic):
+> ```json
+> { "resource": "https://<id>.gateway.bedrock-agentcore.<region>.amazonaws.com/mcp", ... }
+> ```
+>
+> Expected response (RFC 9728 §2 — `resource` is OPTIONAL):
+> ```json
+> { "authorization_servers": ["..."], "scopes_supported": [] }
+> ```
+
+Both options can be pursued in parallel. Option A gives an immediate working solution.
+Option B is the permanent fix that benefits all Entra customers.
+
+---
+
+### Note on VS Code enterpriseManaged
+
+VS Code has an `enterpriseManaged: true` option in `mcp.json` that uses OAuth Identity
+Assertion Authorization Grant (ID-JAG / RFC 8693). This does NOT work with Entra ID.
+Entra does not support the `urn:ietf:params:oauth:grant-type:token-exchange` grant type
+and returns `AADSTS70003` when VS Code attempts the token exchange. The `enterpriseManaged`
+feature was designed and tested against Okta, not Entra. Do not use it with Entra ID.
 
 ---
 
