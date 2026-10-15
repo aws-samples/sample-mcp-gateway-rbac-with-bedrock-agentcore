@@ -1,0 +1,16 @@
+{
+  "servers": {
+    "mcp-gateway": {
+      "url": "REPLACE_WITH_YOUR_GATEWAY_URL",
+      "description": "Centrally governed MCP gateway. Tools available depend on your team membership.",
+      "authorization": {
+        "type": "oauth",
+        "clientId": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "authorizationEndpoint": "https://login.microsoftonline.com/REPLACE_WITH_YOUR_TENANT_ID/oauth2/v2.0/authorize",
+        "tokenEndpoint": "https://login.microsoftonline.com/REPLACE_WITH_YOUR_TENANT_ID/oauth2/v2.0/token",
+        "scopes": ["api://REPLACE_WITH_YOUR_CLIENT_ID/.default"],
+        "redirectUri": "http://127.0.0.1:33418"
+      }
+    }
+  }
+}

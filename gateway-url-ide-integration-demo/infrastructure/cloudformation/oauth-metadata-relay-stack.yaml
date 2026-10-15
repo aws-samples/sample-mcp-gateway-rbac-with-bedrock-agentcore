@@ -1,0 +1,227 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  AgentCore OAuth Metadata Relay — strips the "resource" field from the
+  AgentCore gateway's /.well-known/oauth-protected-resource response before
+  VS Code sees it. This prevents Entra ID from receiving the legacy "resource"
+  parameter that causes AADSTS9010010.
+
+  Developers point mcp.json at the CloudFront URL instead of the gateway
+  directly. All authentication and MCP tool calls are forwarded unchanged to
+  the real gateway. Zero per-developer setup required.
+
+  Deploy once per gateway URL. Takes about 3 minutes.
+
+Parameters:
+  GatewayUrl:
+    Type: String
+    Description: >
+      Full AgentCore Gateway URL including /mcp path.
+      Example: https://abc123.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp
+    AllowedPattern: "https://.+"
+
+Outputs:
+  RelayUrl:
+    Description: >
+      Use this URL as the "url" field in mcp.json instead of the gateway URL directly.
+    Value: !Sub "https://${CloudFrontDistribution.DomainName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-RelayUrl"
+
+  RelayDomain:
+    Description: CloudFront domain name for the relay
+    Value: !GetAtt CloudFrontDistribution.DomainName
+
+Resources:
+
+  # ── Lambda execution role ────────────────────────────────────────────────
+
+  RelayLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-relay-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - edgelambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Tags:
+        - Key: builder
+          Value: walkie
+        - Key: auto-delete
+          Value: "no"
+
+  # ── Lambda@Edge function (Origin Request) ───────────────────────────────
+  # Runs in us-east-1 (Lambda@Edge requirement). Intercepts requests to
+  # /.well-known/oauth-protected-resource, fetches the real gateway response,
+  # strips the "resource" field, and returns the cleaned JSON. All other
+  # requests are forwarded to the origin unchanged.
+
+  RelayFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-relay"
+      Description: >
+        Strips the "resource" field from the AgentCore gateway's
+        /.well-known/oauth-protected-resource response to prevent
+        AADSTS9010010 when using Entra ID with VS Code.
+      Runtime: nodejs22.x
+      Handler: index.handler
+      Role: !GetAtt RelayLambdaRole.Arn
+      Timeout: 10
+      MemorySize: 128
+      # GATEWAY_URL is injected via CloudFront custom header at the origin level
+      # so the Lambda doesn't need an env var (Lambda@Edge doesn't support env vars)
+      Code:
+        ZipFile: |
+          const https = require('https');
+          const http = require('http');
+
+          const WELL_KNOWN_PATH = '/.well-known/oauth-protected-resource';
+
+          function fetchUrl(url) {
+            return new Promise((resolve, reject) => {
+              const lib = url.startsWith('https') ? https : http;
+              lib.get(url, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => resolve({ status: res.statusCode, body: data }));
+              }).on('error', reject);
+            });
+          }
+
+          exports.handler = async (event) => {
+            const request = event.Records[0].cf.request;
+            const uri = request.uri;
+
+            // Only intercept the oauth-protected-resource well-known endpoint
+            if (!uri.startsWith(WELL_KNOWN_PATH)) {
+              return request; // pass through unchanged
+            }
+
+            // Read the real gateway origin from the custom header injected by CloudFront
+            const headers = request.headers;
+            const gatewayOriginHeader = headers['x-gateway-origin'];
+            if (!gatewayOriginHeader || !gatewayOriginHeader[0]) {
+              return {
+                status: '502',
+                statusDescription: 'Bad Gateway',
+                headers: { 'content-type': [{ key: 'Content-Type', value: 'application/json' }] },
+                body: JSON.stringify({ error: 'Missing x-gateway-origin header' }),
+              };
+            }
+
+            const gatewayOrigin = gatewayOriginHeader[0].value;
+            const upstreamUrl = `${gatewayOrigin}${uri}`;
+
+            try {
+              const { status, body } = await fetchUrl(upstreamUrl);
+              let metadata = {};
+              try { metadata = JSON.parse(body); } catch (_) {}
+
+              // Remove the "resource" field — this is what causes AADSTS9010010
+              delete metadata.resource;
+
+              return {
+                status: String(status),
+                statusDescription: 'OK',
+                headers: {
+                  'content-type': [{ key: 'Content-Type', value: 'application/json' }],
+                  'cache-control': [{ key: 'Cache-Control', value: 'no-store' }],
+                  'access-control-allow-origin': [{ key: 'Access-Control-Allow-Origin', value: '*' }],
+                },
+                body: JSON.stringify(metadata),
+              };
+            } catch (err) {
+              return {
+                status: '502',
+                statusDescription: 'Bad Gateway',
+                headers: { 'content-type': [{ key: 'Content-Type', value: 'application/json' }] },
+                body: JSON.stringify({ error: String(err.message) }),
+              };
+            }
+          };
+      Tags:
+        - Key: builder
+          Value: walkie
+        - Key: auto-delete
+          Value: "no"
+
+  RelayFunctionVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !GetAtt RelayFunction.Arn
+      Description: "Relay function version for Lambda@Edge"
+
+  # ── CloudFront distribution ──────────────────────────────────────────────
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      Tags:
+        - Key: builder
+          Value: walkie
+        - Key: auto-delete
+          Value: "no"
+      DistributionConfig:
+        Comment: !Sub "AgentCore OAuth Metadata Relay — ${AWS::StackName}"
+        Enabled: true
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+
+        Origins:
+          - Id: AgentCoreGateway
+            # Extract just the hostname from the full gateway URL
+            # The Lambda@Edge function handles the /mcp suffix routing
+            DomainName: !Select
+              - 2
+              - !Split
+                - "/"
+                - !Ref GatewayUrl
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+            # Inject the full gateway origin as a custom header so Lambda@Edge
+            # can construct the upstream URL for well-known requests
+            OriginCustomHeaders:
+              - HeaderName: x-gateway-origin
+                HeaderValue: !Sub
+                  - "https://${Hostname}"
+                  - Hostname: !Select
+                      - 2
+                      - !Split
+                        - "/"
+                        - !Ref GatewayUrl
+
+        DefaultCacheBehavior:
+          TargetOriginId: AgentCoreGateway
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+          # Disable caching — MCP tool calls are stateful POST requests
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # CachingDisabled
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3  # AllViewer
+          # Lambda@Edge on Origin Request — intercepts well-known endpoint
+          LambdaFunctionAssociations:
+            - EventType: origin-request
+              LambdaFunctionARN: !Ref RelayFunctionVersion
+              IncludeBody: false
+
+        # Forward all headers, cookies, and query strings to origin
+        # so MCP tool calls work exactly as if hitting the gateway directly

@@ -31,7 +31,7 @@ def main():
 
     # ── Check if gateway already exists ──
     existing = client.list_gateways()
-    for gw in existing.get('gateways', []):
+    for gw in existing.get('items', existing.get('gateways', [])):
         if gw.get('name') == gateway_name:
             url = gw.get('url', '')
             print(url, end='')
@@ -80,15 +80,19 @@ def main():
         role_arn = f"arn:aws:iam::{args.account_id}:role/{role_name}"
 
     # ── Create gateway ──
+    # API shape: authorizerType + authorizerConfiguration (not authorizationConfiguration)
+    # discoveryUrl must be the full OIDC discovery endpoint (issuer + /.well-known/openid-configuration)
     resp = client.create_gateway(
         name=gateway_name,
         description="MCP Gateway with OAuth/JWT auth and Cedar RBAC — no local proxy needed",
         roleArn=role_arn,
-        protocolConfiguration={'mcp': {}},
-        authorizationConfiguration={
-            'customJWTAuthorization': {
-                'issuerUrl': cognito_issuer,
-                'allowedAudiences': [args.cognito_client_id],
+        protocolType='MCP',
+        protocolConfiguration={'mcp': {'supportedVersions': ['2025-11-25']}},
+        authorizerType='CUSTOM_JWT',
+        authorizerConfiguration={
+            'customJWTAuthorizer': {
+                'discoveryUrl': cognito_issuer + '/.well-known/openid-configuration',
+                'allowedAudience': [args.cognito_client_id],
                 'allowedClients': [args.cognito_client_id]
             }
         }
@@ -97,12 +101,12 @@ def main():
 
     # Wait for gateway to be READY
     for _ in range(30):
-        gw = client.get_gateway(gatewayId=gateway_id)
+        gw = client.get_gateway(gatewayIdentifier=gateway_id)
         if gw.get('status') == 'READY':
             break
         time.sleep(5)
 
-    gateway_url = gw.get('url', f"https://{gateway_id}.gateway.bedrock-agentcore.{args.region}.amazonaws.com")
+    gateway_url = gw.get('gatewayUrl', f"https://{gateway_id}.gateway.bedrock-agentcore.{args.region}.amazonaws.com/mcp")
 
     # ── Add Lambda targets ──
     targets = [
@@ -115,12 +119,17 @@ def main():
         lambda_arn = f"arn:aws:lambda:{args.region}:{args.account_id}:function:{lambda_name}"
         try:
             client.create_gateway_target(
-                gatewayId=gateway_id,
+                gatewayIdentifier=gateway_id,
                 name=target_name,
                 description=desc,
+                credentialProviderConfigurations=[
+                    {'credentialProviderType': 'GATEWAY_IAM_ROLE'}
+                ],
                 targetConfiguration={
-                    'lambdaTarget': {
-                        'lambdaArn': lambda_arn
+                    'mcp': {
+                        'mcpServer': {
+                            'endpoint': f"arn:aws:lambda:{args.region}:{args.account_id}:function:{lambda_name}"
+                        }
                     }
                 }
             )
